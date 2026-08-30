@@ -62,26 +62,18 @@ function variantNameFromUrl(url: string) {
 function looksLikeAIOStreams(addon: AddonData) {
     const id = addon?.manifest?.id?.toLowerCase?.() || "";
     const name = addon?.manifest?.name?.toLowerCase?.() || "";
-    const url = normalizeForComparison(addon?.transportUrl || "").toLowerCase();
 
-    return (
-        id.includes("aiostreams") ||
-        name.includes("aiostreams") ||
-        (url.includes("/stremio/") && url.endsWith("/manifest.json"))
-    );
+    // Do not identify AIOStreams from a generic /stremio/... manifest URL.
+    // AIOmetadata and other addons use similar per-user URL layouts.
+    return id.includes("aiostreams") || name.includes("aiostreams");
 }
 
 function findInstalledVariant(addons: AddonData[]) {
     const candidates = addons.filter(looksLikeAIOStreams);
-    if (candidates.length > 0) {
-        const explicitVariant = candidates.find((addon) => Boolean(variantNameFromUrl(addon.transportUrl)));
-        return explicitVariant || candidates[0];
-    }
+    if (candidates.length === 0) return undefined;
 
-    return addons.find((addon) => {
-        const url = normalizeForComparison(addon?.transportUrl || "").toLowerCase();
-        return url.includes("/stremio/") && url.endsWith("/manifest.json");
-    });
+    const explicitVariant = candidates.find((addon) => Boolean(variantNameFromUrl(addon.transportUrl)));
+    return explicitVariant || candidates[0];
 }
 
 export default function AIOStreamsVariantManager() {
@@ -138,8 +130,6 @@ export default function AIOStreamsVariantManager() {
         );
     }, [rememberDetails, primaryAccount, cloneAccounts]);
 
-    // Automatically refresh the variant catalog whenever the remembered
-    // AIOStreams URL/password becomes available or changes.
     useEffect(() => {
         const manifestUrl = primaryAccount.aiostreams_variant_url?.trim();
         const configPassword = primaryAccount.aiostreams_config_password?.trim();
@@ -380,10 +370,7 @@ export default function AIOStreamsVariantManager() {
             return;
         }
 
-        // Best-effort catalog reload so newly-created AIOStreams variants are
-        // picked up whenever the user performs the normal bulk refresh workflow.
         await loadVariantCatalog(true);
-
         prepared.forEach((ref) => setStatus(ref.key, { type: "info", message: "Queued for safe refresh…" }));
 
         try {
@@ -491,30 +478,15 @@ export default function AIOStreamsVariantManager() {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                    <button
-                        type="button"
-                        onClick={detectAll}
-                        disabled={bulkBusy !== null}
-                        className="flex items-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-sm text-white hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
+                    <button type="button" onClick={detectAll} disabled={bulkBusy !== null} className="flex items-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-sm text-white hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50">
                         <Search className="h-4 w-4" />
                         {bulkBusy === "detect" ? "Detecting…" : "Detect All"}
                     </button>
-                    <button
-                        type="button"
-                        onClick={applyAll}
-                        disabled={bulkBusy !== null}
-                        className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
+                    <button type="button" onClick={applyAll} disabled={bulkBusy !== null} className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">
                         <CheckCircle2 className="h-4 w-4" />
                         {bulkBusy === "apply" ? "Applying…" : "Apply All Variants"}
                     </button>
-                    <button
-                        type="button"
-                        onClick={refreshAll}
-                        disabled={bulkBusy !== null}
-                        className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
+                    <button type="button" onClick={refreshAll} disabled={bulkBusy !== null} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
                         <RefreshCw className={`h-4 w-4 ${bulkBusy === "refresh" ? "animate-spin" : ""}`} />
                         {bulkBusy === "refresh" ? "Refreshing…" : "Refresh All"}
                     </button>
@@ -531,20 +503,8 @@ export default function AIOStreamsVariantManager() {
                     </div>
                 </div>
                 <div className="flex flex-col gap-2 sm:flex-row">
-                    <input
-                        type="password"
-                        value={primaryAccount.aiostreams_config_password || ""}
-                        onChange={(event) => updateConfigPassword(event.target.value)}
-                        placeholder={aliasInstall ? "AIOStreams configuration password" : "Config password (optional if present in URL)"}
-                        className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white placeholder-gray-500"
-                        autoComplete="off"
-                    />
-                    <button
-                        type="button"
-                        onClick={() => loadVariantCatalog(false)}
-                        disabled={catalogBusy || bulkBusy !== null}
-                        className="flex items-center justify-center gap-2 rounded-lg bg-indigo-700 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
+                    <input type="password" value={primaryAccount.aiostreams_config_password || ""} onChange={(event) => updateConfigPassword(event.target.value)} placeholder={aliasInstall ? "AIOStreams configuration password" : "Config password (optional if present in URL)"} className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white placeholder-gray-500" autoComplete="off" />
+                    <button type="button" onClick={() => loadVariantCatalog(false)} disabled={catalogBusy || bulkBusy !== null} className="flex items-center justify-center gap-2 rounded-lg bg-indigo-700 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50">
                         <RefreshCw className={`h-4 w-4 ${catalogBusy ? "animate-spin" : ""}`} />
                         {catalogBusy ? "Loading…" : "Reload Variants"}
                     </button>
@@ -561,55 +521,25 @@ export default function AIOStreamsVariantManager() {
                     const status = statuses[ref.key];
                     const isExcluded = ref.kind === "clone" && ref.account.selected === false;
                     const selectedVariant = ref.account.aiostreams_variant_name || "";
-                    const variantOptions =
-                        selectedVariant && !availableVariants.some((variant) => variant.id === selectedVariant)
-                            ? [{ id: selectedVariant, name: `${selectedVariant} (currently assigned)` }, ...availableVariants]
-                            : availableVariants;
+                    const variantOptions = selectedVariant && !availableVariants.some((variant) => variant.id === selectedVariant)
+                        ? [{ id: selectedVariant, name: `${selectedVariant} (currently assigned)` }, ...availableVariants]
+                        : availableVariants;
 
                     return (
-                        <div
-                            key={ref.key}
-                            className={`rounded-lg border p-3 ${isExcluded ? "border-gray-700 bg-gray-800/30 opacity-60" : "border-gray-700 bg-gray-800/70"}`}
-                        >
+                        <div key={ref.key} className={`rounded-lg border p-3 ${isExcluded ? "border-gray-700 bg-gray-800/30 opacity-60" : "border-gray-700 bg-gray-800/70"}`}>
                             <div className="mb-2 flex items-center justify-between gap-2">
                                 <div className="text-sm font-semibold text-gray-200">{ref.label}</div>
                                 {isExcluded && <span className="text-xs text-gray-500">Excluded from bulk</span>}
                             </div>
 
                             <div className="flex flex-col gap-2 lg:flex-row">
-                                <input
-                                    type="text"
-                                    value={ref.account.aiostreams_variant_url || ""}
-                                    onChange={(event) => updateVariantUrl(ref, event.target.value)}
-                                    placeholder="Installed AIOStreams manifest URL"
-                                    className="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-900 p-2 text-sm text-white placeholder-gray-500"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => handleDetect(ref)}
-                                    disabled={busy[ref.key] || bulkBusy !== null}
-                                    className="flex items-center justify-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-sm text-white hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    <Search className="h-4 w-4" />
-                                    Detect
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => refreshOne(ref)}
-                                    disabled={busy[ref.key] || bulkBusy !== null}
-                                    className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    <RefreshCw className={`h-4 w-4 ${busy[ref.key] ? "animate-spin" : ""}`} />
-                                    Refresh
-                                </button>
+                                <input type="text" value={ref.account.aiostreams_variant_url || ""} onChange={(event) => updateVariantUrl(ref, event.target.value)} placeholder="Installed AIOStreams manifest URL" className="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-900 p-2 text-sm text-white placeholder-gray-500" />
+                                <button type="button" onClick={() => handleDetect(ref)} disabled={busy[ref.key] || bulkBusy !== null} className="flex items-center justify-center gap-2 rounded-lg bg-gray-700 px-3 py-2 text-sm text-white hover:bg-gray-600 disabled:cursor-not-allowed disabled:opacity-50"><Search className="h-4 w-4" />Detect</button>
+                                <button type="button" onClick={() => refreshOne(ref)} disabled={busy[ref.key] || bulkBusy !== null} className="flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${busy[ref.key] ? "animate-spin" : ""}`} />Refresh</button>
                             </div>
 
                             <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                                <select
-                                    value={selectedVariant}
-                                    onChange={(event) => updateVariantName(ref, event.target.value)}
-                                    className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white"
-                                >
+                                <select value={selectedVariant} onChange={(event) => updateVariantName(ref, event.target.value)} className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white">
                                     <option value="">Choose variant — no change</option>
                                     {variantOptions.map((variant) => (
                                         <option key={variant.id} value={variant.id}>
@@ -617,34 +547,12 @@ export default function AIOStreamsVariantManager() {
                                         </option>
                                     ))}
                                 </select>
-                                <button
-                                    type="button"
-                                    onClick={() => applyOne(ref)}
-                                    disabled={busy[ref.key] || bulkBusy !== null || !selectedVariant}
-                                    className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    <CheckCircle2 className="h-4 w-4" />
-                                    Apply Variant
-                                </button>
+                                <button type="button" onClick={() => applyOne(ref)} disabled={busy[ref.key] || bulkBusy !== null || !selectedVariant} className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"><CheckCircle2 className="h-4 w-4" />Apply Variant</button>
                             </div>
 
                             {status && (
-                                <div
-                                    className={`mt-2 flex items-start gap-2 text-xs ${
-                                        status.type === "success"
-                                            ? "text-green-400"
-                                            : status.type === "error"
-                                                ? "text-red-400"
-                                                : "text-blue-300"
-                                    }`}
-                                >
-                                    {status.type === "success" ? (
-                                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                                    ) : status.type === "error" ? (
-                                        <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                                    ) : (
-                                        <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
-                                    )}
+                                <div className={`mt-2 flex items-start gap-2 text-xs ${status.type === "success" ? "text-green-400" : status.type === "error" ? "text-red-400" : "text-blue-300"}`}>
+                                    {status.type === "success" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : status.type === "error" ? <XCircle className="mt-0.5 h-4 w-4 shrink-0" /> : <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />}
                                     <span className="break-all">{status.message}</span>
                                 </div>
                             )}
