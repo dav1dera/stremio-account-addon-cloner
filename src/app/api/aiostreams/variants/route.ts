@@ -11,6 +11,20 @@ type Variant = {
   enabled?: boolean;
 };
 
+type AIOStreamsApiResponse = {
+  success?: boolean;
+  error?: {
+    message?: string;
+  };
+  detail?: string;
+  data?: {
+    userData?: {
+      variants?: Variant[];
+      [key: string]: unknown;
+    };
+  };
+};
+
 function normalizeManifestUrl(input: string): URL {
   let value = (input || "").trim();
   if (!value) throw new Error("AIOStreams manifest URL is missing");
@@ -88,9 +102,9 @@ async function fetchUserData(origin: string, identifier: string, password: strin
     signal: AbortSignal.timeout(15000),
   });
 
-  let json: any = null;
+  let json: AIOStreamsApiResponse | null = null;
   try {
-    json = await response.json();
+    json = (await response.json()) as AIOStreamsApiResponse;
   } catch {
     // handled below
   }
@@ -104,7 +118,7 @@ async function fetchUserData(origin: string, identifier: string, password: strin
     );
   }
 
-  return json?.data?.userData;
+  return json.data?.userData;
 }
 
 export async function POST(req: Request) {
@@ -122,7 +136,7 @@ export async function POST(req: Request) {
       throw new Error("AIOStreams returned no configuration data");
     }
 
-    const rawVariants = Array.isArray(userData.variants) ? (userData.variants as Variant[]) : [];
+    const rawVariants = Array.isArray(userData.variants) ? userData.variants : [];
     const variants = rawVariants
       .filter(
         (variant) =>
