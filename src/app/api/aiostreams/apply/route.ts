@@ -5,7 +5,8 @@ import { getAddons, getAuth, pushAddonCollection } from "@/app/lib/stremio-clien
 
 type ApplyItem = {
   account: Account;
-  variant: string;
+  variants?: string[];
+  variant?: string;
 };
 
 type ApplyPayload = {
@@ -15,6 +16,7 @@ type ApplyPayload = {
 type ApplyResult = {
   index: number;
   success: boolean;
+  variants?: string[];
   variant?: string;
   variantUrl?: string;
   addonName?: string;
@@ -40,15 +42,7 @@ function normalizeManifestUrl(input: string): string {
 function isAIOStreams(addon: AddonData): boolean {
   const id = addon?.manifest?.id?.toLowerCase?.() || "";
   const name = addon?.manifest?.name?.toLowerCase?.() || "";
-  if (id.includes("aiostreams") || name.includes("aiostreams")) return true;
-
-  try {
-    const parsed = new URL(normalizeManifestUrl(addon.transportUrl));
-    return parsed.pathname.toLowerCase().includes("/stremio/") &&
-      parsed.pathname.toLowerCase().endsWith("/manifest.json");
-  } catch {
-    return false;
-  }
+  return id.includes("aiostreams") || name.includes("aiostreams");
 }
 
 function findInstalledAIOStreams(addons: AddonData[], configuredUrl?: string): number {
@@ -62,7 +56,7 @@ function findInstalledAIOStreams(addons: AddonData[], configuredUrl?: string): n
           return false;
         }
       });
-      if (exact >= 0) return exact;
+      if (exact >= 0 && isAIOStreams(addons[exact])) return exact;
     } catch {
       // Ignore stale/invalid stored URL and fall through to manifest identity.
     }
@@ -71,9 +65,22 @@ function findInstalledAIOStreams(addons: AddonData[], configuredUrl?: string): n
   return addons.findIndex(isAIOStreams);
 }
 
-function buildVariantUrl(installedUrl: string, variant: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/.test(variant)) {
-    throw new Error(`Invalid variant name: ${variant}`);
+function normalizeVariants(item: ApplyItem): string[] {
+  const source = Array.isArray(item.variants) && item.variants.length > 0
+    ? item.variants
+    : item.variant
+      ? [item.variant]
+      : [];
+
+  return [...new Set(source.map((value) => (value || "").trim().toLowerCase()).filter(Boolean))];
+}
+
+function buildVariantUrl(installedUrl: string, variants: string[]): string {
+  if (variants.length === 0) throw new Error("Choose at least one variant first");
+  for (const variant of variants) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(variant)) {
+      throw new Error(`Invalid variant name: ${variant}`);
+    }
   }
 
   const parsed = new URL(normalizeManifestUrl(installedUrl));
@@ -87,7 +94,8 @@ function buildVariantUrl(installedUrl: string, variant: string): string {
   }
 
   path = path.replace(/\/manifest\.json$/i, "");
-  parsed.pathname = `${path}/v/${encodeURIComponent(variant)}/manifest.json`;
+  const ids = variants.map(encodeURIComponent).join(",");
+  parsed.pathname = `${path}/v/${ids}/manifest.json`;
   return parsed.toString();
 }
 
@@ -135,14 +143,14 @@ async function fetchManifestWithRetry(url: string): Promise<AddonData["manifest"
   throw new Error("Manifest fetch failed after retries");
 }
 
-async function applyVariant(
+async function applyVariants(
   item: ApplyItem,
   index: number,
   manifestCache: Map<string, Promise<AddonData["manifest"]>>
 ): Promise<ApplyResult> {
   try {
-    const variant = (item.variant || "").trim().toLowerCase();
-    if (!variant) throw new Error("Choose a variant first");
+    const variants = normalizeVariants(item);
+    if (variants.length === 0) throw new Error("Choose at least one variant first");
 
     const authKey = await getAuth(item.account);
     const addons = (await getAddons(authKey)) as AddonData[];
@@ -153,7 +161,7 @@ async function applyVariant(
     }
 
     const currentAddon = addons[addonIndex];
-    const variantUrl = buildVariantUrl(currentAddon.transportUrl, variant);
+    const variantUrl = buildVariantUrl(currentAddon.transportUrl, variants);
 
     let manifestPromise = manifestCache.get(variantUrl);
     if (!manifestPromise) {
@@ -174,10 +182,11 @@ async function applyVariant(
     return {
       index,
       success: true,
-      variant,
+      variants,
+      variant: variants.join(","),
       variantUrl,
       addonName: freshManifest.name,
-      message: `Applied variant ${variant}`,
+      message: `Applied variants: ${variants.join(", ")}`,
     };
   } catch (error) {
     return {
@@ -202,7 +211,7 @@ export async function POST(req: Request) {
     const manifestCache = new Map<string, Promise<AddonData["manifest"]>>();
 
     for (const [index, item] of body.items.entries()) {
-      results.push(await applyVariant(item, index, manifestCache));
+      results.push(await applyVariants(item, index, manifestCache));
       if (index < body.items.length - 1) await sleep(400);
     }
 
