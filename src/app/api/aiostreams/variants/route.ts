@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 type DiscoveryPayload = {
   manifestUrl?: string;
   configPassword?: string;
+  operatorUsername?: string;
+  operatorPassword?: string;
 };
 
 type Variant = {
@@ -13,16 +15,31 @@ type Variant = {
 
 type AIOStreamsApiResponse = {
   success?: boolean;
-  error?: {
-    message?: string;
-  };
+  error?: { message?: string };
   detail?: string;
   data?: {
     userData?: {
       variants?: Variant[];
       [key: string]: unknown;
     };
+    profiles?: Array<{
+      id: string;
+      uuid: string;
+      label: string;
+      alias: string | null;
+      needsRelink?: boolean;
+    }>;
+    uuid?: string;
+    password?: string;
+    encryptedPassword?: string;
+    [key: string]: unknown;
   };
+};
+
+type ConfigCredentials = {
+  identifier: string;
+  password: string;
+  mode: "alias" | "uuid" | "profile";
 };
 
 function normalizeManifestUrl(input: string): URL {
@@ -44,37 +61,17 @@ function normalizeManifestUrl(input: string): URL {
   return parsed;
 }
 
-function extractConfigCredentials(
-  manifestUrl: URL,
-  suppliedPassword?: string
-): { identifier: string; password: string; mode: "alias" | "uuid" } {
+function parseManifestIdentity(manifestUrl: URL) {
   const parts = manifestUrl.pathname.split("/").filter(Boolean);
   const stremioIndex = parts.findIndex((part) => part.toLowerCase() === "stremio");
   if (stremioIndex < 0) throw new Error("Could not parse AIOStreams manifest URL");
 
-  // Alias form: /stremio/u/<alias>/manifest.json or /stremio/u/<alias>/v/<id>/manifest.json
-  // AIOStreams accepts the alias anywhere a UUID is accepted, including Basic Auth.
-  // The password is the password stored for that alias in ALIASED_CONFIGURATIONS,
-  // NOT an AIOSTREAMS_AUTH operator/login password.
   if (parts[stremioIndex + 1]?.toLowerCase() === "u") {
     const alias = parts[stremioIndex + 2];
     if (!alias) throw new Error("AIOStreams alias is missing from the manifest URL");
-
-    const password = (suppliedPassword || "").trim();
-    if (!password) {
-      throw new Error(
-        `Alias "${decodeURIComponent(alias)}" detected. Enter its configuration password from ALIASED_CONFIGURATIONS (alias:uuid:password). Do not use AIOSTREAMS_AUTH.`
-      );
-    }
-
-    return {
-      identifier: decodeURIComponent(alias),
-      password,
-      mode: "alias",
-    };
+    return { mode: "alias" as const, identifier: decodeURIComponent(alias) };
   }
 
-  // Full form: /stremio/<uuid>/<password>/manifest.json (variant suffix may follow)
   const uuid = parts[stremioIndex + 1];
   const urlPassword = parts[stremioIndex + 2];
   if (!uuid || !urlPassword) {
@@ -82,9 +79,9 @@ function extractConfigCredentials(
   }
 
   return {
+    mode: "uuid" as const,
     identifier: decodeURIComponent(uuid),
-    password: suppliedPassword?.trim() || decodeURIComponent(urlPassword),
-    mode: "uuid",
+    urlPassword: decodeURIComponent(urlPassword),
   };
 }
 
@@ -92,46 +89,121 @@ function basicAuth(identifier: string, password: string): string {
   return `Basic ${Buffer.from(`${identifier}:${password}`, "utf8").toString("base64")}`;
 }
 
-async function fetchUserData(
+async function parseJson(response: Response): Promise<AIOStreamsApiResponse | null> {
+  try {
+    return (await response.json()) as AIOStreamsApiResponse;
+  } catch {
+    return null;
+  }
+}
+
+function apiError(json: AIOStreamsApiResponse | null, status: number, fallback: string) {
+  return json?.error?.message || json?.detail || `${fallback} (HTTP ${status})`;
+}
+
+async function resolveAliasThroughProfile(
   origin: string,
-  identifier: string,
-  password: string,
-  mode: "alias" | "uuid"
-) {
+  alias: string,
+  operatorUsername: string,
+  operatorPassword: string
+): Promise<ConfigCredentials> {
+  const loginResponse = await fetch(`${origin}/api/v1/auth/login`, {
+    method: "POST",
+    cache: "no-store",
+    redirect: "manual",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username: operatorUsername, password: operatorPassword }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const loginJson = await parseJson(loginResponse);
+  if (!loginResponse.ok || !loginJson?.success) {
+    throw new Error(
+      `AIOStreams operator login failed: ${apiError(loginJson, loginResponse.status, "login failed")}`
+    );
+  }
+
+  const setCookie = loginResponse.headers.get("set-cookie");
+  const sessionCookie = setCookie?.split(";")[0];
+  if (!sessionCookie) {
+    throw new Error("AIOStreams operator login succeeded but no session cookie was returned");
+  }
+
+  const profilesResponse = await fetch(`${origin}/api/v1/profiles`, {
+    method: "GET",
+    cache: "no-store",
+    redirect: "manual",
+    headers: {
+      Accept: "application/json",
+      Cookie: sessionCookie,
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  const profilesJson = await parseJson(profilesResponse);
+  if (!profilesResponse.ok || !profilesJson?.success) {
+    throw new Error(
+      `Could not read AIOStreams saved profiles: ${apiError(profilesJson, profilesResponse.status, "profile lookup failed")}`
+    );
+  }
+
+  const profiles = profilesJson.data?.profiles || [];
+  const profile = profiles.find(
+    (item) => item.alias?.trim().toLowerCase() === alias.trim().toLowerCase()
+  );
+  if (!profile) {
+    throw new Error(
+      `No saved AIOStreams profile uses share alias "${alias}" for operator "${operatorUsername}"`
+    );
+  }
+  if (profile.needsRelink) {
+    throw new Error(`Saved AIOStreams profile "${profile.label}" needs to be relinked before it can be opened`);
+  }
+
+  const openResponse = await fetch(`${origin}/api/v1/profiles/${encodeURIComponent(profile.id)}/open`, {
+    method: "POST",
+    cache: "no-store",
+    redirect: "manual",
+    headers: {
+      Accept: "application/json",
+      Cookie: sessionCookie,
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  const openJson = await parseJson(openResponse);
+  if (!openResponse.ok || !openJson?.success) {
+    throw new Error(
+      `Could not open AIOStreams profile "${profile.label}": ${apiError(openJson, openResponse.status, "profile open failed")}`
+    );
+  }
+
+  const uuid = typeof openJson.data?.uuid === "string" ? openJson.data.uuid : "";
+  const password = typeof openJson.data?.password === "string" ? openJson.data.password : "";
+  if (!uuid || !password) {
+    throw new Error(`AIOStreams profile "${profile.label}" did not return configuration credentials`);
+  }
+
+  return { identifier: uuid, password, mode: "profile" };
+}
+
+async function fetchUserData(origin: string, credentials: ConfigCredentials) {
   const response = await fetch(`${origin}/api/v1/user`, {
     method: "GET",
     cache: "no-store",
     redirect: "error",
     headers: {
       Accept: "application/json",
-      Authorization: basicAuth(identifier, password),
+      Authorization: basicAuth(credentials.identifier, credentials.password),
       "Cache-Control": "no-cache",
     },
     signal: AbortSignal.timeout(15000),
   });
 
-  let json: AIOStreamsApiResponse | null = null;
-  try {
-    json = (await response.json()) as AIOStreamsApiResponse;
-  } catch {
-    // handled below
-  }
-
+  const json = await parseJson(response);
   if (!response.ok || !json?.success) {
-    const detail = json?.error?.message || json?.detail;
-    const invalidCredentials =
-      typeof detail === "string" && /invalid\s+(uuid|alias).*password|invalid\s+uuid\s+or\s+password/i.test(detail);
-
-    if (mode === "alias" && invalidCredentials) {
-      throw new Error(
-        `Alias "${identifier}" was found, but the configuration password is incorrect. Use the password stored with this alias in AIOStreams Settings → Aliased Configurations (ALIASED_CONFIGURATIONS: alias:uuid:password), not AIOSTREAMS_AUTH.`
-      );
-    }
-
     throw new Error(
-      detail
-        ? `AIOStreams configuration API: ${detail}`
-        : `AIOStreams configuration API returned HTTP ${response.status}`
+      `AIOStreams configuration API: ${apiError(json, response.status, "configuration lookup failed")}`
     );
   }
 
@@ -142,14 +214,35 @@ export async function POST(req: Request) {
   try {
     const body = (await req.json()) as DiscoveryPayload;
     const manifestUrl = normalizeManifestUrl(body.manifestUrl || "");
-    const credentials = extractConfigCredentials(manifestUrl, body.configPassword);
-    const userData = await fetchUserData(
-      manifestUrl.origin,
-      credentials.identifier,
-      credentials.password,
-      credentials.mode
-    );
+    const identity = parseManifestIdentity(manifestUrl);
 
+    let credentials: ConfigCredentials;
+    if (identity.mode === "uuid") {
+      credentials = {
+        identifier: identity.identifier,
+        password: body.configPassword?.trim() || identity.urlPassword,
+        mode: "uuid",
+      };
+    } else if (body.operatorUsername?.trim() && body.operatorPassword) {
+      credentials = await resolveAliasThroughProfile(
+        manifestUrl.origin,
+        identity.identifier,
+        body.operatorUsername.trim(),
+        body.operatorPassword
+      );
+    } else if (body.configPassword?.trim()) {
+      credentials = {
+        identifier: identity.identifier,
+        password: body.configPassword.trim(),
+        mode: "alias",
+      };
+    } else {
+      throw new Error(
+        `Alias "${identity.identifier}" detected. Sign in with your AIOStreams operator credentials to resolve its saved profile automatically, or enter the alias configuration password as fallback.`
+      );
+    }
+
+    const userData = await fetchUserData(manifestUrl.origin, credentials);
     if (!userData || typeof userData !== "object") {
       throw new Error("AIOStreams returned no configuration data");
     }
