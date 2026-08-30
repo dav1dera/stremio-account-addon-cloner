@@ -17,6 +17,27 @@ export type AIOStreamsRefreshResponse = {
     results?: AIOStreamsRefreshResult[];
 };
 
+export type AIOStreamsApplyItem = {
+    account: Account;
+    variant: string;
+};
+
+export type AIOStreamsApplyResult = {
+    index: number;
+    success: boolean;
+    variant?: string;
+    variantUrl?: string;
+    addonName?: string;
+    message: string;
+};
+
+export type AIOStreamsApplyResponse = {
+    success: boolean;
+    allSuccessful?: boolean;
+    error?: string;
+    results?: AIOStreamsApplyResult[];
+};
+
 export async function fetchAddons(account: Account) {
     const res = await fetch("/api/addons", {
         method: "POST",
@@ -80,5 +101,17 @@ export async function refreshAIOStreamsVariants(accounts: Account[]) {
 
     const result: AIOStreamsRefreshResponse = await res.json();
     if (!res.ok) throw new Error(result?.error || "AIOStreams refresh request failed");
+    return result;
+}
+
+export async function applyAIOStreamsVariants(items: AIOStreamsApplyItem[]) {
+    const res = await fetch("/api/aiostreams/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+    });
+
+    const result: AIOStreamsApplyResponse = await res.json();
+    if (!res.ok) throw new Error(result?.error || "AIOStreams variant apply request failed");
     return result;
 }
