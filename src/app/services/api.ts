@@ -132,14 +132,38 @@ export async function applyAIOStreamsVariants(items: AIOStreamsApplyItem[]) {
     return result;
 }
 
+type VariantDiscoveryOptions = {
+    configPassword?: string;
+    operatorUsername?: string;
+    operatorPassword?: string;
+};
+
 export async function discoverAIOStreamsVariants(
     manifestUrl: string,
-    options: {
-        configPassword?: string;
-        operatorUsername?: string;
-        operatorPassword?: string;
-    } = {}
+    optionsOrPassword: VariantDiscoveryOptions | string = {}
 ) {
+    let options: VariantDiscoveryOptions;
+
+    if (typeof optionsOrPassword === "string") {
+        const password = optionsOrPassword.trim();
+        const operatorUsername =
+            typeof window !== "undefined"
+                ? sessionStorage.getItem("aiostreams_operator_username_hint")?.trim() || undefined
+                : undefined;
+
+        // Backward-compatible path for the existing UI: when an alias is in use,
+        // the single password field can act as the AIOSTREAMS_AUTH operator password.
+        // The backend first resolves the saved profile by alias. It still receives the
+        // same value as configPassword so direct alias-password auth remains a fallback.
+        options = {
+            configPassword: password || undefined,
+            operatorUsername,
+            operatorPassword: operatorUsername && password ? password : undefined,
+        };
+    } else {
+        options = optionsOrPassword;
+    }
+
     const res = await fetch("/api/aiostreams/variants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
