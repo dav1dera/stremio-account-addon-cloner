@@ -53,6 +53,9 @@ function extractConfigCredentials(
   if (stremioIndex < 0) throw new Error("Could not parse AIOStreams manifest URL");
 
   // Alias form: /stremio/u/<alias>/manifest.json or /stremio/u/<alias>/v/<id>/manifest.json
+  // AIOStreams accepts the alias anywhere a UUID is accepted, including Basic Auth.
+  // The password is the password stored for that alias in ALIASED_CONFIGURATIONS,
+  // NOT an AIOSTREAMS_AUTH operator/login password.
   if (parts[stremioIndex + 1]?.toLowerCase() === "u") {
     const alias = parts[stremioIndex + 2];
     if (!alias) throw new Error("AIOStreams alias is missing from the manifest URL");
@@ -60,7 +63,7 @@ function extractConfigCredentials(
     const password = (suppliedPassword || "").trim();
     if (!password) {
       throw new Error(
-        `This AIOStreams install uses alias "${decodeURIComponent(alias)}". Enter the configuration password once to load variants automatically.`
+        `Alias "${decodeURIComponent(alias)}" detected. Enter its configuration password from ALIASED_CONFIGURATIONS (alias:uuid:password). Do not use AIOSTREAMS_AUTH.`
       );
     }
 
@@ -89,7 +92,12 @@ function basicAuth(identifier: string, password: string): string {
   return `Basic ${Buffer.from(`${identifier}:${password}`, "utf8").toString("base64")}`;
 }
 
-async function fetchUserData(origin: string, identifier: string, password: string) {
+async function fetchUserData(
+  origin: string,
+  identifier: string,
+  password: string,
+  mode: "alias" | "uuid"
+) {
   const response = await fetch(`${origin}/api/v1/user`, {
     method: "GET",
     cache: "no-store",
@@ -111,6 +119,15 @@ async function fetchUserData(origin: string, identifier: string, password: strin
 
   if (!response.ok || !json?.success) {
     const detail = json?.error?.message || json?.detail;
+    const invalidCredentials =
+      typeof detail === "string" && /invalid\s+(uuid|alias).*password|invalid\s+uuid\s+or\s+password/i.test(detail);
+
+    if (mode === "alias" && invalidCredentials) {
+      throw new Error(
+        `Alias "${identifier}" was found, but the configuration password is incorrect. Use the password stored with this alias in AIOStreams Settings → Aliased Configurations (ALIASED_CONFIGURATIONS: alias:uuid:password), not AIOSTREAMS_AUTH.`
+      );
+    }
+
     throw new Error(
       detail
         ? `AIOStreams configuration API: ${detail}`
@@ -129,7 +146,8 @@ export async function POST(req: Request) {
     const userData = await fetchUserData(
       manifestUrl.origin,
       credentials.identifier,
-      credentials.password
+      credentials.password,
+      credentials.mode
     );
 
     if (!userData || typeof userData !== "object") {
