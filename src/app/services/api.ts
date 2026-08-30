@@ -38,6 +38,22 @@ export type AIOStreamsApplyResponse = {
     results?: AIOStreamsApplyResult[];
 };
 
+export type AIOStreamsVariantOption = {
+    id: string;
+    name?: string;
+};
+
+export type AIOStreamsVariantDiscoveryResponse = {
+    success: boolean;
+    error?: string;
+    variants?: AIOStreamsVariantOption[];
+    source?: {
+        origin: string;
+        identifier: string;
+        mode: "alias" | "uuid";
+    };
+};
+
 export async function fetchAddons(account: Account) {
     const res = await fetch("/api/addons", {
         method: "POST",
@@ -113,5 +129,22 @@ export async function applyAIOStreamsVariants(items: AIOStreamsApplyItem[]) {
 
     const result: AIOStreamsApplyResponse = await res.json();
     if (!res.ok) throw new Error(result?.error || "AIOStreams variant apply request failed");
+    return result;
+}
+
+export async function discoverAIOStreamsVariants(
+    manifestUrl: string,
+    configPassword?: string
+) {
+    const res = await fetch("/api/aiostreams/variants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ manifestUrl, configPassword }),
+    });
+
+    const result: AIOStreamsVariantDiscoveryResponse = await res.json();
+    if (!res.ok || !result.success) {
+        throw new Error(result?.error || "AIOStreams variant discovery failed");
+    }
     return result;
 }

@@ -5,9 +5,13 @@ import { CheckCircle2, RefreshCw, Search, XCircle } from "lucide-react";
 import { useAccounts } from "../hooks/useAccounts";
 import type { Account } from "../types/accounts";
 import type { AddonData } from "../types/addon";
-import { applyAIOStreamsVariants, fetchAddons, refreshAIOStreamsVariants } from "../services/api";
-
-const AIOSTREAMS_VARIANTS = ["daniele", "pietro", "marga", "drugo", "blade", "freik"] as const;
+import {
+    applyAIOStreamsVariants,
+    discoverAIOStreamsVariants,
+    fetchAddons,
+    refreshAIOStreamsVariants,
+    type AIOStreamsVariantOption,
+} from "../services/api";
 
 type AccountRef = {
     key: string;
@@ -22,6 +26,11 @@ type Status = {
     message: string;
 };
 
+type CatalogStatus = {
+    type: "success" | "error" | "info";
+    message: string;
+} | null;
+
 function hasCredentials(account: Account) {
     if (account.mode === "authkey") return Boolean(account.authkey?.trim());
     return Boolean(account.email?.trim() && account.password);
@@ -29,6 +38,14 @@ function hasCredentials(account: Account) {
 
 function normalizeForComparison(url: string) {
     return (url || "").replace(/^stremio:\/\//, "https://").replace(/\/$/, "");
+}
+
+function usesAlias(url: string) {
+    try {
+        return /\/stremio\/u\/[^/]+\//i.test(new URL(normalizeForComparison(url)).pathname);
+    } catch {
+        return false;
+    }
 }
 
 function variantNameFromUrl(url: string) {
@@ -80,6 +97,9 @@ export default function AIOStreamsVariantManager() {
     const [statuses, setStatuses] = useState<Record<string, Status>>({});
     const [busy, setBusy] = useState<Record<string, boolean>>({});
     const [bulkBusy, setBulkBusy] = useState<"detect" | "refresh" | "apply" | null>(null);
+    const [availableVariants, setAvailableVariants] = useState<AIOStreamsVariantOption[]>([]);
+    const [catalogBusy, setCatalogBusy] = useState(false);
+    const [catalogStatus, setCatalogStatus] = useState<CatalogStatus>(null);
 
     const refs = useMemo<AccountRef[]>(() => {
         const primaryLabel = primaryAccount.email?.trim()
@@ -118,6 +138,39 @@ export default function AIOStreamsVariantManager() {
         );
     }, [rememberDetails, primaryAccount, cloneAccounts]);
 
+    // Automatically refresh the variant catalog whenever the remembered
+    // AIOStreams URL/password becomes available or changes.
+    useEffect(() => {
+        const manifestUrl = primaryAccount.aiostreams_variant_url?.trim();
+        const configPassword = primaryAccount.aiostreams_config_password?.trim();
+        if (!manifestUrl) return;
+        if (usesAlias(manifestUrl) && !configPassword) return;
+
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            try {
+                const result = await discoverAIOStreamsVariants(manifestUrl, configPassword);
+                if (cancelled) return;
+                setAvailableVariants(result.variants || []);
+                setCatalogStatus({
+                    type: "success",
+                    message: `${result.variants?.length || 0} enabled variant${(result.variants?.length || 0) === 1 ? "" : "s"} loaded automatically`,
+                });
+            } catch (error) {
+                if (cancelled) return;
+                setCatalogStatus({
+                    type: "error",
+                    message: error instanceof Error ? error.message : "Could not load AIOStreams variants",
+                });
+            }
+        }, 600);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [primaryAccount.aiostreams_variant_url, primaryAccount.aiostreams_config_password]);
+
     const setStatus = (key: string, status: Status) => {
         setStatuses((prev) => ({ ...prev, [key]: status }));
     };
@@ -148,6 +201,10 @@ export default function AIOStreamsVariantManager() {
         );
     };
 
+    const updateConfigPassword = (value: string) => {
+        setPrimaryAccount((prev) => ({ ...prev, aiostreams_config_password: value }));
+    };
+
     const detectVariant = async (account: Account) => {
         if (!hasCredentials(account)) {
             throw new Error("Add Stremio credentials or an AuthKey first");
@@ -161,6 +218,42 @@ export default function AIOStreamsVariantManager() {
 
         const url = normalizeForComparison(addon.transportUrl);
         return { url, variant: variantNameFromUrl(url) };
+    };
+
+    const loadVariantCatalog = async (silent = false) => {
+        let manifestUrl = primaryAccount.aiostreams_variant_url?.trim();
+        const configPassword = primaryAccount.aiostreams_config_password?.trim();
+
+        if (!manifestUrl) {
+            const detected = await detectVariant(primaryAccount);
+            manifestUrl = detected.url;
+            setPrimaryAccount((prev) => ({ ...prev, aiostreams_variant_url: detected.url }));
+        }
+
+        if (!silent) {
+            setCatalogBusy(true);
+            setCatalogStatus({ type: "info", message: "Loading variants from AIOStreams…" });
+        }
+
+        try {
+            const result = await discoverAIOStreamsVariants(manifestUrl, configPassword);
+            const variants = result.variants || [];
+            setAvailableVariants(variants);
+            setCatalogStatus({
+                type: "success",
+                message: `${variants.length} enabled variant${variants.length === 1 ? "" : "s"} loaded from ${result.source?.mode === "alias" ? `alias ${result.source.identifier}` : "configuration"}`,
+            });
+            return variants;
+        } catch (error) {
+            setCatalogStatus({
+                type: "error",
+                message: error instanceof Error ? error.message : "Could not load AIOStreams variants",
+            });
+            if (!silent) throw error;
+            return [];
+        } finally {
+            if (!silent) setCatalogBusy(false);
+        }
     };
 
     const handleDetect = async (ref: AccountRef) => {
@@ -287,6 +380,10 @@ export default function AIOStreamsVariantManager() {
             return;
         }
 
+        // Best-effort catalog reload so newly-created AIOStreams variants are
+        // picked up whenever the user performs the normal bulk refresh workflow.
+        await loadVariantCatalog(true);
+
         prepared.forEach((ref) => setStatus(ref.key, { type: "info", message: "Queued for safe refresh…" }));
 
         try {
@@ -377,13 +474,16 @@ export default function AIOStreamsVariantManager() {
         }
     };
 
+    const primaryManifestUrl = primaryAccount.aiostreams_variant_url || "";
+    const aliasInstall = usesAlias(primaryManifestUrl);
+
     return (
         <section className="rounded-xl border border-blue-700/50 bg-gray-900/40 p-4 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-white">AIOStreams Variant Manager</h2>
                     <p className="mt-1 text-sm text-gray-300">
-                        Refresh updates the installed manifest without changing variants. Use Apply Variant only when you intentionally want to change or restore a variant.
+                        Variants are loaded live from your AIOStreams configuration. Refresh updates installed manifests without changing variants; Apply Variant changes them intentionally.
                     </p>
                     <p className="mt-1 text-xs text-gray-400">
                         Bulk actions include the Primary account and target accounts selected above. Apply All ignores accounts with no variant selected.
@@ -421,10 +521,51 @@ export default function AIOStreamsVariantManager() {
                 </div>
             </div>
 
+            <div className="rounded-lg border border-indigo-700/50 bg-indigo-950/20 p-3">
+                <div className="mb-2 flex flex-col gap-1">
+                    <div className="text-sm font-semibold text-indigo-200">Dynamic variant discovery</div>
+                    <div className="text-xs text-gray-400">
+                        {aliasInstall
+                            ? "Your Primary uses an AIOStreams alias. Enter the AIOStreams configuration password once; the alias and server are detected from the installed manifest URL."
+                            : "Server and configuration credentials are derived from the Primary AIOStreams manifest URL when possible."}
+                    </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                        type="password"
+                        value={primaryAccount.aiostreams_config_password || ""}
+                        onChange={(event) => updateConfigPassword(event.target.value)}
+                        placeholder={aliasInstall ? "AIOStreams configuration password" : "Config password (optional if present in URL)"}
+                        className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white placeholder-gray-500"
+                        autoComplete="off"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => loadVariantCatalog(false)}
+                        disabled={catalogBusy || bulkBusy !== null}
+                        className="flex items-center justify-center gap-2 rounded-lg bg-indigo-700 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <RefreshCw className={`h-4 w-4 ${catalogBusy ? "animate-spin" : ""}`} />
+                        {catalogBusy ? "Loading…" : "Reload Variants"}
+                    </button>
+                </div>
+                {catalogStatus && (
+                    <div className={`mt-2 text-xs ${catalogStatus.type === "success" ? "text-green-400" : catalogStatus.type === "error" ? "text-red-400" : "text-blue-300"}`}>
+                        {catalogStatus.message}
+                    </div>
+                )}
+            </div>
+
             <div className="space-y-3">
                 {refs.map((ref) => {
                     const status = statuses[ref.key];
                     const isExcluded = ref.kind === "clone" && ref.account.selected === false;
+                    const selectedVariant = ref.account.aiostreams_variant_name || "";
+                    const variantOptions =
+                        selectedVariant && !availableVariants.some((variant) => variant.id === selectedVariant)
+                            ? [{ id: selectedVariant, name: `${selectedVariant} (currently assigned)` }, ...availableVariants]
+                            : availableVariants;
+
                     return (
                         <div
                             key={ref.key}
@@ -465,19 +606,21 @@ export default function AIOStreamsVariantManager() {
 
                             <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                                 <select
-                                    value={ref.account.aiostreams_variant_name || ""}
+                                    value={selectedVariant}
                                     onChange={(event) => updateVariantName(ref, event.target.value)}
                                     className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white"
                                 >
                                     <option value="">Choose variant — no change</option>
-                                    {AIOSTREAMS_VARIANTS.map((variant) => (
-                                        <option key={variant} value={variant}>{variant}</option>
+                                    {variantOptions.map((variant) => (
+                                        <option key={variant.id} value={variant.id}>
+                                            {variant.name && variant.name !== variant.id ? `${variant.name} (${variant.id})` : variant.id}
+                                        </option>
                                     ))}
                                 </select>
                                 <button
                                     type="button"
                                     onClick={() => applyOne(ref)}
-                                    disabled={busy[ref.key] || bulkBusy !== null || !ref.account.aiostreams_variant_name}
+                                    disabled={busy[ref.key] || bulkBusy !== null || !selectedVariant}
                                     className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     <CheckCircle2 className="h-4 w-4" />
