@@ -5,7 +5,9 @@ import { CheckCircle2, RefreshCw, Search, XCircle } from "lucide-react";
 import { useAccounts } from "../hooks/useAccounts";
 import type { Account } from "../types/accounts";
 import type { AddonData } from "../types/addon";
-import { fetchAddons, refreshAIOStreamsVariants } from "../services/api";
+import { applyAIOStreamsVariants, fetchAddons, refreshAIOStreamsVariants } from "../services/api";
+
+const AIOSTREAMS_VARIANTS = ["daniele", "pietro", "marga", "drugo", "blade", "freik"] as const;
 
 type AccountRef = {
     key: string;
@@ -29,6 +31,17 @@ function normalizeForComparison(url: string) {
     return (url || "").replace(/^stremio:\/\//, "https://").replace(/\/$/, "");
 }
 
+function variantNameFromUrl(url: string) {
+    try {
+        const parsed = new URL(normalizeForComparison(url));
+        const pathMatch = parsed.pathname.match(/\/v\/([^/]+)\/manifest\.json$/i);
+        if (pathMatch?.[1]) return decodeURIComponent(pathMatch[1]).toLowerCase();
+        return (parsed.searchParams.get("v") || "").toLowerCase();
+    } catch {
+        return "";
+    }
+}
+
 function looksLikeAIOStreams(addon: AddonData) {
     const id = addon?.manifest?.id?.toLowerCase?.() || "";
     const name = addon?.manifest?.name?.toLowerCase?.() || "";
@@ -37,16 +50,17 @@ function looksLikeAIOStreams(addon: AddonData) {
     return (
         id.includes("aiostreams") ||
         name.includes("aiostreams") ||
-        (url.includes("/stremio/") && url.includes("/v/") && url.endsWith("/manifest.json"))
+        (url.includes("/stremio/") && url.endsWith("/manifest.json"))
     );
 }
 
 function findInstalledVariant(addons: AddonData[]) {
-    const identified = addons.find(looksLikeAIOStreams);
-    if (identified) return identified;
+    const candidates = addons.filter(looksLikeAIOStreams);
+    if (candidates.length > 0) {
+        const explicitVariant = candidates.find((addon) => Boolean(variantNameFromUrl(addon.transportUrl)));
+        return explicitVariant || candidates[0];
+    }
 
-    // Fallback for custom ADDON_NAME/ADDON_ID installations. Prefer a
-    // variant-looking /stremio/... URL rather than an arbitrary addon.
     return addons.find((addon) => {
         const url = normalizeForComparison(addon?.transportUrl || "").toLowerCase();
         return url.includes("/stremio/") && url.endsWith("/manifest.json");
@@ -65,7 +79,7 @@ export default function AIOStreamsVariantManager() {
 
     const [statuses, setStatuses] = useState<Record<string, Status>>({});
     const [busy, setBusy] = useState<Record<string, boolean>>({});
-    const [bulkBusy, setBulkBusy] = useState<"detect" | "refresh" | null>(null);
+    const [bulkBusy, setBulkBusy] = useState<"detect" | "refresh" | "apply" | null>(null);
 
     const refs = useMemo<AccountRef[]>(() => {
         const primaryLabel = primaryAccount.email?.trim()
@@ -94,9 +108,6 @@ export default function AIOStreamsVariantManager() {
         [refs]
     );
 
-    // The upstream app already stores account details in localStorage when
-    // "Remember my details" is enabled. Keep variant URLs in the same payload
-    // so detected variants survive page reloads too.
     useEffect(() => {
         if (!rememberDetails) return;
         const encodedPrimary = btoa(JSON.stringify(primaryAccount));
@@ -124,7 +135,20 @@ export default function AIOStreamsVariantManager() {
         );
     };
 
-    const detectVariantUrl = async (account: Account) => {
+    const updateVariantName = (ref: AccountRef, variant: string) => {
+        if (ref.kind === "primary") {
+            setPrimaryAccount((prev) => ({ ...prev, aiostreams_variant_name: variant }));
+            return;
+        }
+
+        setCloneAccounts((prev) =>
+            prev.map((account, index) =>
+                index === ref.index ? { ...account, aiostreams_variant_name: variant } : account
+            )
+        );
+    };
+
+    const detectVariant = async (account: Account) => {
         if (!hasCredentials(account)) {
             throw new Error("Add Stremio credentials or an AuthKey first");
         }
@@ -135,16 +159,23 @@ export default function AIOStreamsVariantManager() {
             throw new Error("No installed AIOStreams addon was detected");
         }
 
-        return normalizeForComparison(addon.transportUrl);
+        const url = normalizeForComparison(addon.transportUrl);
+        return { url, variant: variantNameFromUrl(url) };
     };
 
     const handleDetect = async (ref: AccountRef) => {
         setBusy((prev) => ({ ...prev, [ref.key]: true }));
         setStatus(ref.key, { type: "info", message: "Detecting installed variant…" });
         try {
-            const url = await detectVariantUrl(ref.account);
-            updateVariantUrl(ref, url);
-            setStatus(ref.key, { type: "success", message: "Installed variant detected" });
+            const detected = await detectVariant(ref.account);
+            updateVariantUrl(ref, detected.url);
+            if (detected.variant) updateVariantName(ref, detected.variant);
+            setStatus(ref.key, {
+                type: "success",
+                message: detected.variant
+                    ? `Installed variant detected: ${detected.variant}`
+                    : "AIOStreams base/main install detected",
+            });
         } catch (error) {
             setStatus(ref.key, {
                 type: "error",
@@ -164,21 +195,13 @@ export default function AIOStreamsVariantManager() {
                 throw new Error("Add Stremio credentials or an AuthKey first");
             }
 
-            let account = ref.account;
-            let variantUrl = account.aiostreams_variant_url?.trim();
-
-            if (!variantUrl) {
-                variantUrl = await detectVariantUrl(account);
-                updateVariantUrl(ref, variantUrl);
-                account = { ...account, aiostreams_variant_url: variantUrl };
-            }
-
-            const response = await refreshAIOStreamsVariants([account]);
+            const response = await refreshAIOStreamsVariants([ref.account]);
             const result = response.results?.[0];
             if (!result?.success) {
                 throw new Error(result?.message || response.error || "Refresh failed");
             }
 
+            if (result.variantUrl) updateVariantUrl(ref, result.variantUrl);
             setStatus(ref.key, { type: "success", message: result.message });
         } catch (error) {
             setStatus(ref.key, {
@@ -190,19 +213,54 @@ export default function AIOStreamsVariantManager() {
         }
     };
 
+    const applyOne = async (ref: AccountRef) => {
+        setBusy((prev) => ({ ...prev, [ref.key]: true }));
+        const variant = ref.account.aiostreams_variant_name?.trim();
+        setStatus(ref.key, { type: "info", message: "Applying selected variant…" });
+
+        try {
+            if (!hasCredentials(ref.account)) {
+                throw new Error("Add Stremio credentials or an AuthKey first");
+            }
+            if (!variant) throw new Error("Choose a variant first");
+
+            const response = await applyAIOStreamsVariants([{ account: ref.account, variant }]);
+            const result = response.results?.[0];
+            if (!result?.success) {
+                throw new Error(result?.message || response.error || "Variant apply failed");
+            }
+
+            if (result.variantUrl) updateVariantUrl(ref, result.variantUrl);
+            setStatus(ref.key, { type: "success", message: result.message });
+        } catch (error) {
+            setStatus(ref.key, {
+                type: "error",
+                message: error instanceof Error ? error.message : "Variant apply failed",
+            });
+        } finally {
+            setBusy((prev) => ({ ...prev, [ref.key]: false }));
+        }
+    };
+
     const detectAll = async () => {
         setBulkBusy("detect");
-        let detected = 0;
+        let detectedCount = 0;
         let failed = 0;
 
         for (const ref of bulkRefs) {
             if (!hasCredentials(ref.account)) continue;
             setStatus(ref.key, { type: "info", message: "Detecting installed variant…" });
             try {
-                const url = await detectVariantUrl(ref.account);
-                updateVariantUrl(ref, url);
-                setStatus(ref.key, { type: "success", message: "Installed variant detected" });
-                detected += 1;
+                const detected = await detectVariant(ref.account);
+                updateVariantUrl(ref, detected.url);
+                if (detected.variant) updateVariantName(ref, detected.variant);
+                setStatus(ref.key, {
+                    type: "success",
+                    message: detected.variant
+                        ? `Installed variant detected: ${detected.variant}`
+                        : "AIOStreams base/main install detected",
+                });
+                detectedCount += 1;
             } catch (error) {
                 failed += 1;
                 setStatus(ref.key, {
@@ -215,36 +273,13 @@ export default function AIOStreamsVariantManager() {
         setBulkBusy(null);
         setAlert({
             type: failed ? "error" : "success",
-            message: `AIOStreams detection complete: ${detected} detected${failed ? `, ${failed} failed` : ""}.`,
+            message: `AIOStreams detection complete: ${detectedCount} detected${failed ? `, ${failed} failed` : ""}.`,
         });
     };
 
     const refreshAll = async () => {
         setBulkBusy("refresh");
-        const prepared: { ref: AccountRef; account: Account }[] = [];
-
-        for (const ref of bulkRefs) {
-            if (!hasCredentials(ref.account)) continue;
-            try {
-                let account = ref.account;
-                let variantUrl = account.aiostreams_variant_url?.trim();
-
-                if (!variantUrl) {
-                    setStatus(ref.key, { type: "info", message: "Detecting variant before refresh…" });
-                    variantUrl = await detectVariantUrl(account);
-                    updateVariantUrl(ref, variantUrl);
-                    account = { ...account, aiostreams_variant_url: variantUrl };
-                }
-
-                prepared.push({ ref, account });
-                setStatus(ref.key, { type: "info", message: "Queued for refresh…" });
-            } catch (error) {
-                setStatus(ref.key, {
-                    type: "error",
-                    message: error instanceof Error ? error.message : "Could not prepare account",
-                });
-            }
-        }
+        const prepared = bulkRefs.filter((ref) => hasCredentials(ref.account));
 
         if (prepared.length === 0) {
             setBulkBusy(null);
@@ -252,20 +287,23 @@ export default function AIOStreamsVariantManager() {
             return;
         }
 
+        prepared.forEach((ref) => setStatus(ref.key, { type: "info", message: "Queued for safe refresh…" }));
+
         try {
             const response = await refreshAIOStreamsVariants(prepared.map((item) => item.account));
             const results = response.results || [];
             let successCount = 0;
             let failureCount = 0;
 
-            prepared.forEach((item, index) => {
+            prepared.forEach((ref, index) => {
                 const result = results[index];
                 if (result?.success) {
                     successCount += 1;
-                    setStatus(item.ref.key, { type: "success", message: result.message });
+                    if (result.variantUrl) updateVariantUrl(ref, result.variantUrl);
+                    setStatus(ref.key, { type: "success", message: result.message });
                 } else {
                     failureCount += 1;
-                    setStatus(item.ref.key, {
+                    setStatus(ref.key, {
                         type: "error",
                         message: result?.message || "Refresh failed",
                     });
@@ -286,16 +324,69 @@ export default function AIOStreamsVariantManager() {
         }
     };
 
+    const applyAll = async () => {
+        const prepared = bulkRefs.filter(
+            (ref) => hasCredentials(ref.account) && Boolean(ref.account.aiostreams_variant_name?.trim())
+        );
+
+        if (prepared.length === 0) {
+            setAlert({ type: "error", message: "Choose at least one variant before Apply All Variants." });
+            return;
+        }
+
+        setBulkBusy("apply");
+        prepared.forEach((ref) => setStatus(ref.key, { type: "info", message: "Queued for variant apply…" }));
+
+        try {
+            const response = await applyAIOStreamsVariants(
+                prepared.map((ref) => ({
+                    account: ref.account,
+                    variant: ref.account.aiostreams_variant_name!.trim(),
+                }))
+            );
+            const results = response.results || [];
+            let successCount = 0;
+            let failureCount = 0;
+
+            prepared.forEach((ref, index) => {
+                const result = results[index];
+                if (result?.success) {
+                    successCount += 1;
+                    if (result.variantUrl) updateVariantUrl(ref, result.variantUrl);
+                    setStatus(ref.key, { type: "success", message: result.message });
+                } else {
+                    failureCount += 1;
+                    setStatus(ref.key, {
+                        type: "error",
+                        message: result?.message || "Variant apply failed",
+                    });
+                }
+            });
+
+            setAlert({
+                type: failureCount ? "error" : "success",
+                message: `Variant apply complete: ${successCount} applied${failureCount ? `, ${failureCount} failed` : ""}.`,
+            });
+        } catch (error) {
+            setAlert({
+                type: "error",
+                message: error instanceof Error ? error.message : "Bulk variant apply failed",
+            });
+        } finally {
+            setBulkBusy(null);
+        }
+    };
+
     return (
         <section className="rounded-xl border border-blue-700/50 bg-gray-900/40 p-4 space-y-4">
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                 <div>
                     <h2 className="text-xl font-bold text-white">AIOStreams Variant Manager</h2>
                     <p className="mt-1 text-sm text-gray-300">
-                        Detect each account&apos;s installed AIOStreams variant and refresh its manifest in place without changing addon order.
+                        Refresh updates the installed manifest without changing variants. Use Apply Variant only when you intentionally want to change or restore a variant.
                     </p>
                     <p className="mt-1 text-xs text-gray-400">
-                        Bulk actions include the Primary account and target accounts selected above.
+                        Bulk actions include the Primary account and target accounts selected above. Apply All ignores accounts with no variant selected.
                     </p>
                 </div>
 
@@ -308,6 +399,15 @@ export default function AIOStreamsVariantManager() {
                     >
                         <Search className="h-4 w-4" />
                         {bulkBusy === "detect" ? "Detecting…" : "Detect All"}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={applyAll}
+                        disabled={bulkBusy !== null}
+                        className="flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        <CheckCircle2 className="h-4 w-4" />
+                        {bulkBusy === "apply" ? "Applying…" : "Apply All Variants"}
                     </button>
                     <button
                         type="button"
@@ -340,7 +440,7 @@ export default function AIOStreamsVariantManager() {
                                     type="text"
                                     value={ref.account.aiostreams_variant_url || ""}
                                     onChange={(event) => updateVariantUrl(ref, event.target.value)}
-                                    placeholder="https://aiostreams.example/stremio/.../v/.../manifest.json"
+                                    placeholder="Installed AIOStreams manifest URL"
                                     className="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-900 p-2 text-sm text-white placeholder-gray-500"
                                 />
                                 <button
@@ -360,6 +460,28 @@ export default function AIOStreamsVariantManager() {
                                 >
                                     <RefreshCw className={`h-4 w-4 ${busy[ref.key] ? "animate-spin" : ""}`} />
                                     Refresh
+                                </button>
+                            </div>
+
+                            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                                <select
+                                    value={ref.account.aiostreams_variant_name || ""}
+                                    onChange={(event) => updateVariantName(ref, event.target.value)}
+                                    className="min-w-0 flex-1 rounded-lg border border-indigo-700/70 bg-gray-900 p-2 text-sm text-white"
+                                >
+                                    <option value="">Choose variant — no change</option>
+                                    {AIOSTREAMS_VARIANTS.map((variant) => (
+                                        <option key={variant} value={variant}>{variant}</option>
+                                    ))}
+                                </select>
+                                <button
+                                    type="button"
+                                    onClick={() => applyOne(ref)}
+                                    disabled={busy[ref.key] || bulkBusy !== null || !ref.account.aiostreams_variant_name}
+                                    className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    <CheckCircle2 className="h-4 w-4" />
+                                    Apply Variant
                                 </button>
                             </div>
 
