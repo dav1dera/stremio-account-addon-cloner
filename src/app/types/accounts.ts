@@ -9,4 +9,5 @@ export type Account = {
     clone_mode: "sync" | "append";
     selected?: boolean;
     aiostreams_variant_url?: string;
+    aiostreams_variant_name?: string;
 };
