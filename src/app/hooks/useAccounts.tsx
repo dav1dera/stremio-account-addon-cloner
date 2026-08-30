@@ -83,6 +83,18 @@ export const AccountsProvider = ({ children }: { children: React.ReactNode }) =>
         }
     }, []);
 
+    // The AIOStreams profile resolver can reuse the Primary username as the
+    // operator-login username when the same address is used in AIOSTREAMS_AUTH.
+    // Keep this session-only unless Remember my details is explicitly enabled.
+    useEffect(() => {
+        const username = primaryAccount.aiostreams_operator_username?.trim() || primaryAccount.email?.trim();
+        if (username) {
+            sessionStorage.setItem("aiostreams_operator_username_hint", username);
+        } else {
+            sessionStorage.removeItem("aiostreams_operator_username_hint");
+        }
+    }, [primaryAccount.email, primaryAccount.aiostreams_operator_username]);
+
     const addAccount = () =>
         setCloneAccounts([
             ...cloneAccounts,
