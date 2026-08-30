@@ -2,6 +2,21 @@ import { Account } from "../types/accounts";
 import { AddonData } from "../types/addon";
 import { AddonsResponse } from "../types/apiResponse";
 
+export type AIOStreamsRefreshResult = {
+    index: number;
+    success: boolean;
+    variantUrl?: string;
+    addonName?: string;
+    message: string;
+};
+
+export type AIOStreamsRefreshResponse = {
+    success: boolean;
+    allSuccessful?: boolean;
+    error?: string;
+    results?: AIOStreamsRefreshResult[];
+};
+
 export async function fetchAddons(account: Account) {
     const res = await fetch("/api/addons", {
         method: "POST",
@@ -56,3 +71,14 @@ export async function updateAddons(
     return result;
 }
 
+export async function refreshAIOStreamsVariants(accounts: Account[]) {
+    const res = await fetch("/api/aiostreams/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accounts }),
+    });
+
+    const result: AIOStreamsRefreshResponse = await res.json();
+    if (!res.ok) throw new Error(result?.error || "AIOStreams refresh request failed");
+    return result;
+}
