@@ -223,6 +223,12 @@ export async function POST(req: Request) {
         password: body.configPassword?.trim() || identity.urlPassword,
         mode: "uuid",
       };
+    } else if (body.configPassword?.trim()) {
+      credentials = {
+        identifier: identity.identifier,
+        password: body.configPassword.trim(),
+        mode: "alias",
+      };
     } else if (body.operatorUsername?.trim() && body.operatorPassword) {
       credentials = await resolveAliasThroughProfile(
         manifestUrl.origin,
@@ -230,15 +236,9 @@ export async function POST(req: Request) {
         body.operatorUsername.trim(),
         body.operatorPassword
       );
-    } else if (body.configPassword?.trim()) {
-      credentials = {
-        identifier: identity.identifier,
-        password: body.configPassword.trim(),
-        mode: "alias",
-      };
     } else {
       throw new Error(
-        `Alias "${identity.identifier}" detected. Sign in with your AIOStreams operator credentials to resolve its saved profile automatically, or enter the alias configuration password as fallback.`
+        `Alias "${identity.identifier}" detected. Enter the alias configuration password, or use operator login when local password login is enabled.`
       );
     }
 
