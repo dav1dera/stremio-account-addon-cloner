@@ -50,7 +50,7 @@ export type AIOStreamsVariantDiscoveryResponse = {
     source?: {
         origin: string;
         identifier: string;
-        mode: "alias" | "uuid";
+        mode: "alias" | "uuid" | "profile";
     };
 };
 
@@ -134,12 +134,16 @@ export async function applyAIOStreamsVariants(items: AIOStreamsApplyItem[]) {
 
 export async function discoverAIOStreamsVariants(
     manifestUrl: string,
-    configPassword?: string
+    options: {
+        configPassword?: string;
+        operatorUsername?: string;
+        operatorPassword?: string;
+    } = {}
 ) {
     const res = await fetch("/api/aiostreams/variants", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ manifestUrl, configPassword }),
+        body: JSON.stringify({ manifestUrl, ...options }),
     });
 
     const result: AIOStreamsVariantDiscoveryResponse = await res.json();
