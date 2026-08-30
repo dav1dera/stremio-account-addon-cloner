@@ -45,6 +45,19 @@ function normalizeTransportUrl(input: string): string {
   }
 }
 
+function variantFamilyKey(input: string): string | null {
+  try {
+    const parsed = new URL(normalizeTransportUrl(input));
+    const familyPath = parsed.pathname.replace(
+      /\/v\/[^/]+\/manifest\.json$/i,
+      "/manifest.json"
+    );
+    return `${parsed.origin}${familyPath}`;
+  } catch {
+    return null;
+  }
+}
+
 function hasAIOStreamsIdentity(addon: AddonData): boolean {
   const id = addon?.manifest?.id?.toLowerCase?.() || "";
   const name = addon?.manifest?.name?.toLowerCase?.() || "";
@@ -65,11 +78,22 @@ function sameOriginAndStremioPath(addon: AddonData, targetManifestUrl: string): 
   }
 }
 
+function sameVariantFamily(addon: AddonData, targetManifestUrl: string): boolean {
+  const currentFamily = variantFamilyKey(addon.transportUrl);
+  const targetFamily = variantFamilyKey(targetManifestUrl);
+  return Boolean(currentFamily && targetFamily && currentFamily === targetFamily);
+}
+
 function findInstalledAIOStreams(addons: AddonData[], targetManifestUrl: string): number {
   const exact = addons.findIndex(
     (addon) => normalizeTransportUrl(addon.transportUrl) === targetManifestUrl
   );
   if (exact >= 0) return exact;
+
+  // If the user changes from one variant to another, match the same base
+  // configuration first (everything before /v/<variant>/manifest.json).
+  const sameFamily = addons.findIndex((addon) => sameVariantFamily(addon, targetManifestUrl));
+  if (sameFamily >= 0) return sameFamily;
 
   const identifiedSameOrigin = addons.findIndex(
     (addon) => hasAIOStreamsIdentity(addon) && sameOriginAndStremioPath(addon, targetManifestUrl)
