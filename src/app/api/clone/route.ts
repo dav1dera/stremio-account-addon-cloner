@@ -23,12 +23,12 @@ function normalizeUrl(value?: string): string {
 }
 
 /**
- * Detect AIOStreams conservatively enough for clone protection.
+ * Detect AIOStreams without relying on generic /stremio/... URL shapes.
  *
- * Priority:
- *  1. Exact per-account variant URL detected/stored by the Variant Manager.
- *  2. Manifest id/name identifying AIOStreams.
- *  3. Known AIOStreams-style /stremio/... URLs, including user aliases and variants.
+ * AIOmetadata and other addons can use very similar per-user manifest URLs, so
+ * URL-path heuristics can misclassify them as AIOStreams and make cloning skip
+ * them. Only treat an addon as AIOStreams when we have an exact configured
+ * variant URL or the manifest explicitly identifies AIOStreams.
  */
 function isAIOStreamsAddon(addon: AddonData, configuredVariantUrl?: string): boolean {
   const transportUrl = normalizeUrl(addon?.transportUrl);
@@ -40,21 +40,8 @@ function isAIOStreamsAddon(addon: AddonData, configuredVariantUrl?: string): boo
 
   const id = addon?.manifest?.id?.toLowerCase?.() || "";
   const name = addon?.manifest?.name?.toLowerCase?.() || "";
-  if (id.includes("aiostreams") || name.includes("aiostreams")) {
-    return true;
-  }
 
-  try {
-    const url = new URL(transportUrl);
-    const path = url.pathname.toLowerCase();
-    return (
-      path.endsWith("/manifest.json") &&
-      path.includes("/stremio/") &&
-      (path.includes("/stremio/u/") || path.includes("/v/"))
-    );
-  } catch {
-    return false;
-  }
+  return id.includes("aiostreams") || name.includes("aiostreams");
 }
 
 async function cloneAddonForAccount(addon: AddonData, account: Account): Promise<AddonData> {
@@ -109,7 +96,8 @@ export async function POST(req: Request) {
 
           for (const addon of primaryAddons) {
             // Never append the Primary AIOStreams variant; the target's installed
-            // variant remains untouched.
+            // variant remains untouched. All other addons, including AIOmetadata,
+            // are cloned normally.
             if (isAIOStreamsAddon(addon, primary.aiostreams_variant_url)) {
               continue;
             }
@@ -139,6 +127,7 @@ export async function POST(req: Request) {
             continue;
           }
 
+          // AIOmetadata and every other non-AIOStreams addon are copied normally.
           syncedAddons.push(await cloneAddonForAccount(addon, acc));
         }
 
