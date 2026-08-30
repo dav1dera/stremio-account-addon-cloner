@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { Copy } from "lucide-react";
+import { Copy, ShieldCheck } from "lucide-react";
 import { useAccounts } from "../hooks/useAccounts";
 import { validateAccount, validateCloneAccounts } from "../utils/validation";
 import { cloneAddons } from "../services/api";
@@ -43,12 +43,15 @@ export default function CloneControls() {
         try {
             saveToLocalStorage();
             const addonsToClone = addons.filter((addon) => addon.checked).map((addon) => addon.addon);
-            await cloneAddons(
+            const result = await cloneAddons(
                 primaryAccount,
                 cloneAccounts.filter((account) => account.selected),
                 addonsToClone
             );
-            setAlert({ type: "success", message: "Addons cloned successfully!" });
+            setAlert({
+                type: "success",
+                message: result?.message || "Addons cloned successfully; AIOStreams variants preserved!"
+            });
         } catch (err) {
             if (err instanceof Error) {
                 setAlert({ type: "error", message: err.message });
@@ -72,6 +75,13 @@ export default function CloneControls() {
                     {getAccountsStats()}
                 </div>
             )}
+
+            <div className="mb-3 flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-sm text-blue-100">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-blue-400" />
+                <span>
+                    AIOStreams variants are protected during cloning. Sync/Append clone the other addons without replacing each target account&apos;s installed AIOStreams variant.
+                </span>
+            </div>
 
             <button
                 type="button"

@@ -11,6 +11,61 @@ type ClonePayload = {
   addons: AddonData[];
 };
 
+function normalizeUrl(value?: string): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return value.trim();
+  }
+}
+
+/**
+ * Detect AIOStreams conservatively enough for clone protection.
+ *
+ * Priority:
+ *  1. Exact per-account variant URL detected/stored by the Variant Manager.
+ *  2. Manifest id/name identifying AIOStreams.
+ *  3. Known AIOStreams-style /stremio/... URLs, including user aliases and variants.
+ */
+function isAIOStreamsAddon(addon: AddonData, configuredVariantUrl?: string): boolean {
+  const transportUrl = normalizeUrl(addon?.transportUrl);
+  const configuredUrl = normalizeUrl(configuredVariantUrl);
+
+  if (configuredUrl && transportUrl === configuredUrl) {
+    return true;
+  }
+
+  const id = addon?.manifest?.id?.toLowerCase?.() || "";
+  const name = addon?.manifest?.name?.toLowerCase?.() || "";
+  if (id.includes("aiostreams") || name.includes("aiostreams")) {
+    return true;
+  }
+
+  try {
+    const url = new URL(transportUrl);
+    const path = url.pathname.toLowerCase();
+    return (
+      path.endsWith("/manifest.json") &&
+      path.includes("/stremio/") &&
+      (path.includes("/stremio/u/") || path.includes("/v/"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function cloneAddonForAccount(addon: AddonData, account: Account): Promise<AddonData> {
+  let currentAddon: AddonData = { ...addon };
+
+  if (account.is_debrid_override && addon.manifest.id) {
+    currentAddon = await handleAddon(addon, account);
+  }
+
+  return currentAddon;
+}
 
 export async function POST(req: Request) {
   const { primary, clones, addons }: ClonePayload = await req.json();
@@ -18,7 +73,7 @@ export async function POST(req: Request) {
   try {
     let primaryAddons: AddonData[] = [];
 
-    // Use user-selected addons if provided
+    // Use user-selected addons if provided.
     if (addons.length > 0) {
       primaryAddons = addons;
     } else {
@@ -37,30 +92,71 @@ export async function POST(req: Request) {
     for (const [index, acc] of clones.entries()) {
       try {
         const cloneAuth = await getAuth(acc);
-        if (!clonedAddons[cloneAuth]) clonedAddons[cloneAuth] = [];
+        const existingAddons = (await getAddons(cloneAuth)) as AddonData[];
+
+        // AIOStreams is special: every target account can have its own variant.
+        // Never copy the Primary account's AIOStreams entry over a target.
+        const targetAIOStreams = existingAddons.filter((addon) =>
+          isAIOStreamsAddon(addon, acc.aiostreams_variant_url)
+        );
+        const targetAIOStreamsIndex = existingAddons.findIndex((addon) =>
+          isAIOStreamsAddon(addon, acc.aiostreams_variant_url)
+        );
 
         if (acc.clone_mode === "append") {
-          const existingAddons = await getAddons(cloneAuth);
+          // Append keeps the target collection as-is, including its AIOStreams variant.
           clonedAddons[cloneAuth] = [...existingAddons];
+
+          for (const addon of primaryAddons) {
+            // Never append the Primary AIOStreams variant; the target's installed
+            // variant remains untouched.
+            if (isAIOStreamsAddon(addon, primary.aiostreams_variant_url)) {
+              continue;
+            }
+
+            // Skip Cinemeta in append mode, preserving upstream behavior.
+            if (addon.manifest.id.includes("cinemeta")) {
+              continue;
+            }
+
+            clonedAddons[cloneAuth].push(await cloneAddonForAccount(addon, acc));
+          }
+
+          continue;
         }
 
-        // Loop over primary addons and assign to clone account
-        for (const addon of primaryAddons) {
-          let current_addon: AddonData = { ...addon };
+        // Sync mode: reproduce the Primary collection for normal addons, but replace
+        // any Primary AIOStreams slot with the target account's own installed variant.
+        const syncedAddons: AddonData[] = [];
+        let handledAIOStreamsSlot = false;
 
-          // Skip cinemeta in append mode
-          if (acc.clone_mode === "append" && addon.manifest.id.includes("cinemeta")) {
+        for (const addon of primaryAddons) {
+          if (isAIOStreamsAddon(addon, primary.aiostreams_variant_url)) {
+            if (!handledAIOStreamsSlot && targetAIOStreams.length > 0) {
+              syncedAddons.push(...targetAIOStreams);
+            }
+            handledAIOStreamsSlot = true;
             continue;
           }
 
-          // Override debrid keys if applicable
-          if (acc.is_debrid_override && addon.manifest.id) {
-            current_addon = await handleAddon(addon, acc);
-          }
-
-          clonedAddons[cloneAuth].push(current_addon);
+          syncedAddons.push(await cloneAddonForAccount(addon, acc));
         }
 
+        // If the user selected only a subset of Primary addons and that selection did
+        // not contain AIOStreams, keep the target AIOStreams entry anyway. Insert it as
+        // close as possible to its previous collection position.
+        if (!handledAIOStreamsSlot && targetAIOStreams.length > 0) {
+          const insertAt = Math.min(
+            Math.max(targetAIOStreamsIndex, 0),
+            syncedAddons.length
+          );
+          syncedAddons.splice(insertAt, 0, ...targetAIOStreams);
+        }
+
+        // If the target did not already have AIOStreams installed, intentionally do
+        // not install the Primary variant. Variant installation remains an explicit
+        // per-account action in the Variant Manager.
+        clonedAddons[cloneAuth] = syncedAddons;
       } catch (err) {
         if (err instanceof Error) {
           throw new Error(`Clone Account #${index + 1}: ${err.message}`);
@@ -68,13 +164,13 @@ export async function POST(req: Request) {
       }
     }
 
-    for (const [authKey, addons] of Object.entries(clonedAddons)) {
-      await pushAddonCollection(authKey, addons);
+    for (const [authKey, accountAddons] of Object.entries(clonedAddons)) {
+      await pushAddonCollection(authKey, accountAddons);
     }
 
     const response: CloneResponse = {
       success: true,
-      message: "Addons cloned successfully",
+      message: "Addons cloned successfully; AIOStreams variants preserved",
     };
 
     return NextResponse.json(response, { status: 200 });
