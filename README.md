@@ -1,43 +1,75 @@
-# 🎯 Stremio Account Addon Cloner
+# Stremio Account Addon Cloner + AIOStreams Variant Manager
 
-A **Next.js 15** web app that lets you **clone addons** from a primary Stremio account to multiple secondary accounts.  
-Styled with **Tailwind CSS**.
+Fork of [oozmakafa/stremio-account-addon-cloner](https://github.com/oozmakafa/stremio-account-addon-cloner), extended with multi-account AIOStreams variant management.
 
----
+The app is built with **Next.js 15** and **Tailwind CSS**.
 
-## Vercel Instance
-https://stremio-account-addon-cloner.vercel.app/
+## Features
 
-## 🚀 Features
+### Original cloner features
 
-- 🔑 **Login with Email/Password or Auth Key**
-- 📥 **Fetch all addons** from a primary account
-- 📤 **Push addons** to one or more secondary accounts
+- Login with Stremio Email/Password or AuthKey
+- Fetch addons from a primary Stremio account
+- Clone selected addons to multiple secondary accounts
+- Sync or append mode
+- View/remove installed addons on target accounts
+- Existing supported debrid-key overrides
 
+### AIOStreams Variant Manager
 
-## 🛠 Local Environment Setup
-### 1️⃣ Prerequisites
+Each Stremio account can keep its **own AIOStreams variant manifest URL**.
 
-Make sure you have the following installed:
+- **Detect** the AIOStreams variant already installed on one account
+- **Detect All** variants for the primary + selected target accounts
+- Store a different variant URL per account
+- **Refresh** one account
+- **Refresh All** configured accounts in one operation
+- Fetch the current `manifest.json` with cache disabled
+- Replace the installed AIOStreams manifest **in place**
+- Preserve the addon collection order, flags, transport name, and every other installed addon
+- Show per-account success/error status
 
-- **Node.js** `>= 18.x` – [Download here](https://nodejs.org/)
-- **npm** `>= 9.x` (comes with Node.js)  
-- **Git** – [Download here](https://git-scm.com/)  
-- **VS Code** (recommended) – [Download here](https://code.visualstudio.com/)
+This is intended for AIOStreams changes that modify the Stremio manifest and would normally require manually reinstalling the addon on every account.
 
+The variant must already be installed at least once on an account. The manager deliberately refuses to guess a new Stremio collection entry when AIOStreams is missing; this avoids modifying the wrong addon.
 
-### 2️⃣ Clone the Repository
+## How the AIOStreams refresh works
 
-```
-git clone https://github.com/oozmakafa/stremio-account-addon-cloner.git
+For each account the manager:
+
+1. Authenticates to Stremio.
+2. Reads the current addon collection with `addonCollectionGet`.
+3. Detects the installed AIOStreams/variant transport URL, or uses the URL saved for that account.
+4. Downloads a fresh `manifest.json` from that variant.
+5. Replaces only the AIOStreams entry at the same collection position.
+6. Writes the updated collection using `addonCollectionSet`.
+
+No other addon is reordered or replaced by the AIOStreams refresh operation.
+
+## Local setup
+
+### Prerequisites
+
+- Node.js 18+
+- npm 9+
+- Git
+
+### Install
+
+```bash
+git clone https://github.com/dav1dera/stremio-account-addon-cloner.git
 cd stremio-account-addon-cloner
-```
-### 3️⃣ Install Dependencies
-```
 npm install
-```
-
-### 4️⃣ Run the Development Server
-```
 npm run dev
 ```
+
+For a production build:
+
+```bash
+npm run build
+npm start
+```
+
+## Notes
+
+When **Remember my details** is enabled, the upstream app stores the account configuration in browser `localStorage`; this fork includes the saved AIOStreams variant URL in the same local browser payload.

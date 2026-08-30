@@ -8,4 +8,5 @@ export type Account = {
     debrid_key: string;
     clone_mode: "sync" | "append";
     selected?: boolean;
+    aiostreams_variant_url?: string;
 };

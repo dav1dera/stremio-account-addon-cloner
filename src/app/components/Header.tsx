@@ -11,7 +11,7 @@ const Header = () => {
                     Stremio Account Addon Cloner
                 </h1>
                 <p className="mt-2 text-gray-200 text-sm md:text-base">
-                    Clone your Stremio addons from your primary account to multiple accounts easily
+                    Clone addons across accounts and refresh different AIOStreams variants in one place
                 </p>
 
                 {/* Blended Soft Info Box */}
@@ -48,6 +48,10 @@ const Header = () => {
                                     It helps you copy addons from your main Stremio account to other accounts.
                                 </div>
                                 <div>
+                                    <span className="font-semibold">🔹 What is the AIOStreams Variant Manager?</span>{" "}
+                                    It detects the AIOStreams variant installed on each account and can refresh all selected variants without changing addon order.
+                                </div>
+                                <div>
                                     <span className="font-semibold">🔹 Are addon credentials also cloned?</span>{" "}
                                     Yes — addon credentials (such as Debrid keys) are copied along with the addons.
                                 </div>
@@ -57,7 +61,7 @@ const Header = () => {
                                 </div>
                                 <div>
                                     <span className="font-semibold">🔹 What are the supported addons for override?</span>{" "}
-                                    Only certain addons support Debrid key overrides. You can see the full list when you click enable the override option and click the (?) icon.
+                                    Only certain addons support Debrid key overrides. You can see the full list when you enable the override option and click the (?) icon.
                                 </div>
                                 <div>
                                     <span className="font-semibold">🔹 Can you add addons on top of existing ones?</span>{" "}
@@ -70,10 +74,6 @@ const Header = () => {
                                 <div>
                                     <span className="font-semibold">🔹 Can I undo a clone?</span>{" "}
                                     There’s no automatic undo, but you can easily remove addons by opening the installed addons of each clone account and clicking the trash icon or delete all.
-                                </div>
-                                <div>
-                                    <span className="font-semibold">🔹 Is it safe?</span>{" "}
-                                    Yes. The tool only works with your accounts and does not save or share any of your data.
                                 </div>
                             </div>
                         </div>
