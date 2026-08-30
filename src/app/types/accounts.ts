@@ -11,4 +11,6 @@ export type Account = {
     aiostreams_variant_url?: string;
     aiostreams_variant_name?: string;
     aiostreams_config_password?: string;
+    aiostreams_operator_username?: string;
+    aiostreams_operator_password?: string;
 };
