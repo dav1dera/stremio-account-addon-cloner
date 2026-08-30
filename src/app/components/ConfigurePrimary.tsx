@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { Addon, AddonData } from "../types/addon";
 import { Loader2, Cog, Plus, X } from "lucide-react";
 import { fetchAddons, updateAddons } from "../services/api";
+import { fetchAddonManifestViaProxy } from "../services/addonManifest";
 import { validateAccount } from "../utils/validation";
 import { useAccounts } from "../hooks/useAccounts";
 import AddonsDragAndDropNoCheck from "./PrimaryAddons";
@@ -82,21 +83,20 @@ export default function ConfigurePrimary() {
     };
 
     const handleConfirmAddAddon = async () => {
-        if (!manifestUrl.trim()) return;
+        const url = manifestUrl.trim();
+        if (!url) return;
 
         setAdding(true);
         try {
-            const res = await fetch(manifestUrl);
-            if (!res.ok) throw new Error("Failed to fetch manifest");
-            const manifest = await res.json();
+            const manifest = await fetchAddonManifestViaProxy(url);
 
             const newAddon: Addon = {
                 addon: {
-                    transportUrl: manifestUrl,
+                    transportUrl: url,
                     manifest,
                     flags: { protected: false },
                 } as unknown as AddonData,
-                id: manifestUrl,
+                id: url,
                 name: manifest.name || "Unknown Addon",
                 is_protected: false,
                 is_configurable: manifest?.behaviorHints?.configurable ?? false,
