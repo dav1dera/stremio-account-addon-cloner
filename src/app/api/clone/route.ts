@@ -60,7 +60,6 @@ export async function POST(req: Request) {
   try {
     let primaryAddons: AddonData[] = [];
 
-    // Use user-selected addons if provided.
     if (addons.length > 0) {
       primaryAddons = addons;
     } else {
@@ -81,8 +80,6 @@ export async function POST(req: Request) {
         const cloneAuth = await getAuth(acc);
         const existingAddons = (await getAddons(cloneAuth)) as AddonData[];
 
-        // AIOStreams is special: every target account can have its own variant.
-        // Never copy the Primary account's AIOStreams entry over a target.
         const targetAIOStreams = existingAddons.filter((addon) =>
           isAIOStreamsAddon(addon, acc.aiostreams_variant_url)
         );
@@ -91,18 +88,18 @@ export async function POST(req: Request) {
         );
 
         if (acc.clone_mode === "append") {
-          // Append keeps the target collection as-is, including its AIOStreams variant.
           clonedAddons[cloneAuth] = [...existingAddons];
 
           for (const addon of primaryAddons) {
-            // Never append the Primary AIOStreams variant; the target's installed
-            // variant remains untouched. All other addons, including AIOmetadata,
-            // are cloned normally.
             if (isAIOStreamsAddon(addon, primary.aiostreams_variant_url)) {
+              // Preserve a target-specific AIOStreams install when present, but
+              // install the Primary AIOStreams entry if the target has none.
+              if (targetAIOStreams.length === 0) {
+                clonedAddons[cloneAuth].push({ ...addon });
+              }
               continue;
             }
 
-            // Skip Cinemeta in append mode, preserving upstream behavior.
             if (addon.manifest.id.includes("cinemeta")) {
               continue;
             }
@@ -113,27 +110,31 @@ export async function POST(req: Request) {
           continue;
         }
 
-        // Sync mode: reproduce the Primary collection for normal addons, but replace
-        // any Primary AIOStreams slot with the target account's own installed variant.
         const syncedAddons: AddonData[] = [];
         let handledAIOStreamsSlot = false;
 
         for (const addon of primaryAddons) {
           if (isAIOStreamsAddon(addon, primary.aiostreams_variant_url)) {
-            if (!handledAIOStreamsSlot && targetAIOStreams.length > 0) {
-              syncedAddons.push(...targetAIOStreams);
+            if (!handledAIOStreamsSlot) {
+              if (targetAIOStreams.length > 0) {
+                // Existing target variants always win.
+                syncedAddons.push(...targetAIOStreams);
+              } else {
+                // If AIOStreams is missing entirely, clone the Primary install so
+                // Clone Addons behaves like users expect. It can be customized later
+                // from the Variant Manager.
+                syncedAddons.push({ ...addon });
+              }
             }
             handledAIOStreamsSlot = true;
             continue;
           }
 
-          // AIOmetadata and every other non-AIOStreams addon are copied normally.
           syncedAddons.push(await cloneAddonForAccount(addon, acc));
         }
 
-        // If the user selected only a subset of Primary addons and that selection did
-        // not contain AIOStreams, keep the target AIOStreams entry anyway. Insert it as
-        // close as possible to its previous collection position.
+        // If AIOStreams was not selected from Primary, preserve an existing target
+        // install in sync mode so a partial clone does not remove it.
         if (!handledAIOStreamsSlot && targetAIOStreams.length > 0) {
           const insertAt = Math.min(
             Math.max(targetAIOStreamsIndex, 0),
@@ -142,9 +143,6 @@ export async function POST(req: Request) {
           syncedAddons.splice(insertAt, 0, ...targetAIOStreams);
         }
 
-        // If the target did not already have AIOStreams installed, intentionally do
-        // not install the Primary variant. Variant installation remains an explicit
-        // per-account action in the Variant Manager.
         clonedAddons[cloneAuth] = syncedAddons;
       } catch (err) {
         if (err instanceof Error) {
@@ -159,7 +157,7 @@ export async function POST(req: Request) {
 
     const response: CloneResponse = {
       success: true,
-      message: "Addons cloned successfully; AIOStreams variants preserved",
+      message: "Addons cloned successfully; existing AIOStreams variants preserved and missing installs restored",
     };
 
     return NextResponse.json(response, { status: 200 });
