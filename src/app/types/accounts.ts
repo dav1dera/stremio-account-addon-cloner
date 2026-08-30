@@ -10,4 +10,5 @@ export type Account = {
     selected?: boolean;
     aiostreams_variant_url?: string;
     aiostreams_variant_name?: string;
+    aiostreams_config_password?: string;
 };
