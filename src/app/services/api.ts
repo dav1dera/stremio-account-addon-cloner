@@ -19,12 +19,16 @@ export type AIOStreamsRefreshResponse = {
 
 export type AIOStreamsApplyItem = {
     account: Account;
-    variant: string;
+    /** Preferred multi-variant form. */
+    variants?: string[];
+    /** Legacy single-variant form kept for compatibility. */
+    variant?: string;
 };
 
 export type AIOStreamsApplyResult = {
     index: number;
     success: boolean;
+    variants?: string[];
     variant?: string;
     variantUrl?: string;
     addonName?: string;
@@ -92,10 +96,7 @@ export async function updateAddons(
     account: Account,
     updatedAddons: AddonData[]
 ) {
-    const data = JSON.stringify({
-        account: account,
-        addons: updatedAddons
-    });
+    const data = JSON.stringify({ account, addons: updatedAddons });
 
     const res = await fetch("/api/updateAddons", {
         method: "POST",
@@ -151,10 +152,6 @@ export async function discoverAIOStreamsVariants(
                 ? sessionStorage.getItem("aiostreams_operator_username_hint")?.trim() || undefined
                 : undefined;
 
-        // Backward-compatible path for the existing UI: when an alias is in use,
-        // the single password field can act as the AIOSTREAMS_AUTH operator password.
-        // The backend first resolves the saved profile by alias. It still receives the
-        // same value as configPassword so direct alias-password auth remains a fallback.
         options = {
             configPassword: password || undefined,
             operatorUsername,
