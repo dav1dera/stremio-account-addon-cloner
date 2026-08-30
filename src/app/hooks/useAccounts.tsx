@@ -39,7 +39,8 @@ export const AccountsProvider = ({ children }: { children: React.ReactNode }) =>
         is_debrid_override: false,
         debrid_type: "",
         debrid_key: "",
-        clone_mode: "sync"
+        clone_mode: "sync",
+        aiostreams_variant_url: ""
     });
 
     const [cloneAccounts, setCloneAccounts] = useState<Account[]>([
@@ -53,6 +54,7 @@ export const AccountsProvider = ({ children }: { children: React.ReactNode }) =>
             debrid_key: "",
             clone_mode: "sync",
             selected: true,
+            aiostreams_variant_url: "",
         }
     ]);
 
@@ -94,6 +96,7 @@ export const AccountsProvider = ({ children }: { children: React.ReactNode }) =>
                 debrid_key: "",
                 clone_mode: "sync",
                 selected: true,
+                aiostreams_variant_url: "",
             }
         ]);
 
