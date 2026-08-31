@@ -1,0 +1,68 @@
+import { NextResponse } from "next/server";
+import {
+  nuvioGetAddons,
+  nuvioGetProfiles,
+  nuvioLogin,
+  nuvioPushAddons,
+} from "@/app/lib/nuvio-client";
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const action = body?.action;
+
+    if (action === "login") {
+      const email = String(body?.email || "").trim();
+      const password = String(body?.password || "");
+      if (!email || !password) {
+        return NextResponse.json({ success: false, error: "Email and password are required" }, { status: 400 });
+      }
+      const auth = await nuvioLogin(email, password);
+      return NextResponse.json({ success: true, auth });
+    }
+
+    const token = String(body?.token || "").trim();
+    if (!token) {
+      return NextResponse.json({ success: false, error: "Missing Nuvio access token" }, { status: 401 });
+    }
+
+    if (action === "profiles") {
+      const profiles = await nuvioGetProfiles(token);
+      return NextResponse.json({ success: true, profiles });
+    }
+
+    if (action === "addons") {
+      const profileId = Number(body?.profileId);
+      if (!Number.isFinite(profileId)) {
+        return NextResponse.json({ success: false, error: "Invalid profile id" }, { status: 400 });
+      }
+      const addons = await nuvioGetAddons(token, profileId);
+      return NextResponse.json({ success: true, addons });
+    }
+
+    if (action === "saveAddons") {
+      const profileId = Number(body?.profileId);
+      if (!Number.isFinite(profileId) || !Array.isArray(body?.addons)) {
+        return NextResponse.json({ success: false, error: "Invalid addon payload" }, { status: 400 });
+      }
+      const addons = body.addons.map((addon: any, index: number) => ({
+        url: String(addon?.url || "").trim(),
+        name: addon?.name == null ? null : String(addon.name),
+        enabled: addon?.enabled !== false,
+        sort_order: index,
+      })).filter((addon: any) => addon.url);
+
+      await nuvioPushAddons(token, profileId, addons);
+      const refreshed = await nuvioGetAddons(token, profileId);
+      return NextResponse.json({ success: true, addons: refreshed });
+    }
+
+    return NextResponse.json({ success: false, error: "Unknown Nuvio action" }, { status: 400 });
+  } catch (err: unknown) {
+    console.error("Nuvio API error:", err);
+    return NextResponse.json(
+      { success: false, error: err instanceof Error ? err.message : "Unknown Nuvio error" },
+      { status: 500 }
+    );
+  }
+}
