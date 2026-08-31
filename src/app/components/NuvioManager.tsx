@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Loader2, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { fetchAddons } from "../services/api";
 import { useAccounts } from "../hooks/useAccounts";
+import type { AddonData } from "../types/addon";
 
 type NuvioProfile = {
   id: string;
@@ -21,13 +22,21 @@ type NuvioAddon = {
   sort_order: number;
 };
 
-async function nuvioRequest(payload: Record<string, unknown>) {
+type NuvioResponse = {
+  success?: boolean;
+  error?: string;
+  auth?: { access_token?: string };
+  profiles?: NuvioProfile[];
+  addons?: NuvioAddon[];
+};
+
+async function nuvioRequest(payload: Record<string, unknown>): Promise<NuvioResponse> {
   const res = await fetch("/api/nuvio", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const result = await res.json();
+  const result = await res.json() as NuvioResponse;
   if (!res.ok || !result?.success) throw new Error(result?.error || "Nuvio request failed");
   return result;
 }
@@ -57,7 +66,7 @@ export default function NuvioManager() {
   const loadProfiles = async (accessToken = token) => {
     if (!accessToken) return;
     const result = await nuvioRequest({ action: "profiles", token: accessToken });
-    const nextProfiles: NuvioProfile[] = result.profiles || [];
+    const nextProfiles = result.profiles || [];
     setProfiles(nextProfiles);
     if (nextProfiles.length) {
       const first = nextProfiles[0].profile_index;
@@ -71,7 +80,7 @@ export default function NuvioManager() {
   const loadAddons = async (id = profileId, accessToken = token) => {
     if (id == null || !accessToken) return;
     const result = await nuvioRequest({ action: "addons", token: accessToken, profileId: id });
-    setAddons((result.addons || []).map((a: NuvioAddon, i: number) => ({ ...a, sort_order: i })));
+    setAddons((result.addons || []).map((a, i) => ({ ...a, sort_order: i })));
   };
 
   const handleLogin = async () => {
@@ -138,13 +147,13 @@ export default function NuvioManager() {
   const importFromStremio = async () => {
     setBusy(true);
     try {
-      const stremioAddons = await fetchAddons(primaryAccount);
+      const stremioAddons: AddonData[] = await fetchAddons(primaryAccount);
       const existing = new Set(addons.map((a) => a.url));
       const imported: NuvioAddon[] = stremioAddons
-        .filter((a: any) => a?.transportUrl && !existing.has(a.transportUrl))
-        .map((a: any, i: number) => ({
-          url: a.transportUrl,
-          name: a?.manifest?.name || null,
+        .filter((addon) => addon.transportUrl && !existing.has(addon.transportUrl))
+        .map((addon, i) => ({
+          url: addon.transportUrl,
+          name: addon.manifest?.name || null,
           enabled: true,
           sort_order: addons.length + i,
         }));
@@ -162,7 +171,7 @@ export default function NuvioManager() {
     setSaving(true);
     try {
       const result = await nuvioRequest({ action: "saveAddons", token, profileId, addons });
-      setAddons((result.addons || []).map((a: NuvioAddon, i: number) => ({ ...a, sort_order: i })));
+      setAddons((result.addons || []).map((a, i) => ({ ...a, sort_order: i })));
       setAlert({ type: "success", message: `Nuvio profile “${currentProfile?.name || profileId}” saved.` });
     } catch (err) {
       setAlert({ type: "error", message: `Failed to save Nuvio addons: ${err instanceof Error ? err.message : "Unknown error"}` });
