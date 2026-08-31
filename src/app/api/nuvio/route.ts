@@ -19,6 +19,11 @@ type NormalizedAddon = {
   sort_order: number;
 };
 
+type NuvioAuth = {
+  access_token?: string;
+  user?: unknown;
+};
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -30,8 +35,15 @@ export async function POST(req: Request) {
       if (!email || !password) {
         return NextResponse.json({ success: false, error: "Email and password are required" }, { status: 400 });
       }
-      const auth = await nuvioLogin(email, password);
-      return NextResponse.json({ success: true, auth });
+
+      const auth = await nuvioLogin(email, password) as NuvioAuth;
+      const accessToken = String(auth?.access_token || "").trim();
+      if (!accessToken) {
+        return NextResponse.json({ success: false, error: "Nuvio did not return an access token" }, { status: 401 });
+      }
+
+      const profiles = await nuvioGetProfiles(accessToken);
+      return NextResponse.json({ success: true, auth, profiles });
     }
 
     const token = String(body?.token || "").trim();
