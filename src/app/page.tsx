@@ -9,6 +9,7 @@ import { useAccounts } from "./hooks/useAccounts";
 import ImportExportControls from "./components/ImportExportControls";
 import TargetAccountsSeparator from "./components/TargetAccountsSeparator";
 import AIOStreamsVariantManager from "./components/AIOStreamsVariantManager";
+import NuvioManager from "./components/NuvioManager";
 
 export default function Home() {
   const {
@@ -29,6 +30,7 @@ export default function Home() {
         <AIOStreamsVariantManager />
         <CloneControls />
         <ImportExportControls />
+        <NuvioManager />
       </div>
 
       <Footer />
