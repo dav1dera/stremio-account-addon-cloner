@@ -89,12 +89,23 @@ export default function NuvioManager() {
       const result = await nuvioRequest({ action: "login", email, password });
       const accessToken = result.auth?.access_token;
       if (!accessToken) throw new Error("Nuvio did not return an access token");
+
+      const nextProfiles = result.profiles || [];
       setToken(accessToken);
       sessionStorage.setItem("nuvio_access_token", accessToken);
+      setProfiles(nextProfiles);
       setPassword("");
-      const first = await loadProfiles(accessToken);
-      if (first != null) await loadAddons(first, accessToken);
-      setAlert({ type: "success", message: "Nuvio account connected." });
+
+      if (nextProfiles.length) {
+        const first = nextProfiles[0].profile_index;
+        setProfileId(first);
+        await loadAddons(first, accessToken);
+      } else {
+        setProfileId(null);
+        setAddons([]);
+      }
+
+      setAlert({ type: "success", message: `Nuvio account connected. ${nextProfiles.length} profile(s) loaded.` });
     } catch (err) {
       setAlert({ type: "error", message: `Nuvio login failed: ${err instanceof Error ? err.message : "Unknown error"}` });
     } finally {
