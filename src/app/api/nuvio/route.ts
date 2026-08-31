@@ -6,6 +6,19 @@ import {
   nuvioPushAddons,
 } from "@/app/lib/nuvio-client";
 
+type IncomingAddon = {
+  url?: unknown;
+  name?: unknown;
+  enabled?: unknown;
+};
+
+type NormalizedAddon = {
+  url: string;
+  name: string | null;
+  enabled: boolean;
+  sort_order: number;
+};
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -45,12 +58,15 @@ export async function POST(req: Request) {
       if (!Number.isFinite(profileId) || !Array.isArray(body?.addons)) {
         return NextResponse.json({ success: false, error: "Invalid addon payload" }, { status: 400 });
       }
-      const addons = body.addons.map((addon: any, index: number) => ({
-        url: String(addon?.url || "").trim(),
-        name: addon?.name == null ? null : String(addon.name),
-        enabled: addon?.enabled !== false,
-        sort_order: index,
-      })).filter((addon: any) => addon.url);
+
+      const addons: NormalizedAddon[] = (body.addons as IncomingAddon[])
+        .map((addon, index) => ({
+          url: String(addon?.url || "").trim(),
+          name: addon?.name == null ? null : String(addon.name),
+          enabled: addon?.enabled !== false,
+          sort_order: index,
+        }))
+        .filter((addon) => addon.url.length > 0);
 
       await nuvioPushAddons(token, profileId, addons);
       const refreshed = await nuvioGetAddons(token, profileId);
