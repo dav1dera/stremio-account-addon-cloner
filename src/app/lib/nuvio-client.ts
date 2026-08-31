@@ -18,8 +18,13 @@ export type NuvioAddon = {
 };
 
 type RequestOptions = RequestInit & { token?: string };
+type ErrorBody = {
+  message?: string;
+  error_description?: string;
+  error?: string;
+};
 
-async function nuvioFetch(path: string, options: RequestOptions = {}) {
+async function nuvioFetch(path: string, options: RequestOptions = {}): Promise<unknown> {
   const { token, ...init } = options;
   const response = await fetch(`${NUVIO_URL}${path}`, {
     ...init,
@@ -33,13 +38,14 @@ async function nuvioFetch(path: string, options: RequestOptions = {}) {
   });
 
   const text = await response.text();
-  let body: any = null;
+  let body: unknown = null;
   if (text) {
     try { body = JSON.parse(text); } catch { body = text; }
   }
 
   if (!response.ok) {
-    const message = body?.message || body?.error_description || body?.error || `Nuvio HTTP ${response.status}`;
+    const errorBody = body && typeof body === "object" ? body as ErrorBody : {};
+    const message = errorBody.message || errorBody.error_description || errorBody.error || `Nuvio HTTP ${response.status}`;
     throw new Error(message);
   }
 
@@ -54,15 +60,15 @@ export async function nuvioLogin(email: string, password: string) {
 }
 
 export async function nuvioGetProfiles(token: string): Promise<NuvioProfile[]> {
-  return nuvioFetch("/rest/v1/rpc/sync_pull_profiles", {
+  return await nuvioFetch("/rest/v1/rpc/sync_pull_profiles", {
     method: "POST",
     token,
     body: JSON.stringify({}),
-  });
+  }) as NuvioProfile[];
 }
 
 export async function nuvioGetAddons(token: string, profileId: number): Promise<NuvioAddon[]> {
-  return nuvioFetch(`/rest/v1/addons?select=*&profile_id=eq.${profileId}&order=sort_order`, { token });
+  return await nuvioFetch(`/rest/v1/addons?select=*&profile_id=eq.${profileId}&order=sort_order`, { token }) as NuvioAddon[];
 }
 
 export async function nuvioPushAddons(
